@@ -1,0 +1,63 @@
+/**
+ * Mina Rich Editor
+ *
+ * A flexible, TypeScript-first rich text editor library built with React.
+ * Features a JSON-based document model, immutable state management,
+ * and extensible plugin architecture.
+ *
+ * @packageDocumentation
+ *
+ * @example Basic Usage
+ * ```tsx
+ * import { EditorProvider, useEditor, EditorActions } from 'mina-rich-editor';
+ *
+ * function App() {
+ *   return (
+ *     <EditorProvider>
+ *       <MyEditor />
+ *     </EditorProvider>
+ *   );
+ * }
+ *
+ * function MyEditor() {
+ *   const [state, dispatch] = useEditor();
+ *
+ *   const addParagraph = () => {
+ *     dispatch(EditorActions.insertNode(
+ *       { id: 'p-new', type: 'p', content: 'Hello!' },
+ *       state.container.id,
+ *       'append'
+ *     ));
+ *   };
+ *
+ *   return <button onClick={addParagraph}>Add Paragraph</button>;
+ * }
+ * ```
+ */
+export { isContainerNode, isStructuralNode, isTextNode, hasInlineChildren, getNodeTextContent } from './types';
+export { EditorActions } from './reducer/actions';
+// ============================================================================
+// Reducer
+// ============================================================================
+export { editorReducer, createInitialState } from './reducer/editor-reducer';
+// ============================================================================
+// Zustand Store and Hooks
+// ============================================================================
+export { EditorProvider, useEditorState, useEditorDispatch, useBlockNode, useIsNodeActive, useActiveNodeId, useContainerChildrenIds, useContainer, useSelectionManager, useSelection, } from './store/editor-store';
+// ============================================================================
+// Utilities
+// ============================================================================
+export { findNodeById, findParentById, updateNodeById, deleteNodeById, insertNode, moveNode, cloneNode, traverseTree, validateTree, } from './utils/tree-operations';
+export { splitTextAtSelection, convertToInlineFormat, applyFormatting, removeFormatting, mergeAdjacentTextNodes, getFormattingAtPosition, } from './utils/inline-formatting';
+export { serializeToHtml, serializeToHtmlFragment, serializeToHtmlWithClass, } from './utils/serialize-to-html';
+export { parseMarkdownTable, isMarkdownTable, } from './utils/markdown-table-parser';
+export { setupDragAutoScroll, useDragAutoScroll, } from './utils/drag-auto-scroll';
+// ============================================================================
+// Tailwind Classes Utilities
+// ============================================================================
+export { tailwindClasses, popularClasses, searchTailwindClasses, getAllClasses, } from './tailwind-classes';
+// ============================================================================
+// Demo Content
+// ============================================================================
+export { createDemoContent } from './demo-content';
+export { createEmptyContent } from './empty-content';

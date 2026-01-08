@@ -1,0 +1,59 @@
+/* Blog Editor Custom Styles */
+
+/* Hide the default Quill border */
+.ql-container.ql-snow {
+    border: none !important;
+    font-family: 'Inter', sans-serif;
+    /* Or your app's font */
+    font-size: 1.125rem;
+    /* text-lg */
+}
+
+/* Custom Toolbar Styling */
+.custom-toolbar {
+    border: none !important;
+    border-bottom: 1px solid #E5E7EB !important;
+    /* stone-200 */
+    background: white;
+    padding: 12px 24px !important;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+/* Editor Content Area */
+.ql-editor {
+    padding: 0 !important;
+    min-height: 400px;
+    line-height: 1.8;
+    color: #1C1917;
+    /* stone-900 */
+}
+
+.ql-editor.ql-blank::before {
+    font-style: normal;
+    color: #A8A29E;
+    /* stone-400 */
+    left: 0 !important;
+}
+
+/* Typography inside editor */
+.ql-editor h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: 2.5em;
+    font-weight: 700;
+    margin-bottom: 0.5em;
+}
+
+.ql-editor h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 2em;
+    font-weight: 600;
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+}
+
+.ql-editor p {
+    margin-bottom: 1em;
+}

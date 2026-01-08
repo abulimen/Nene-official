@@ -1,0 +1,58 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+    --font-serif: Georgia, serif;
+    --font-sans: Inter, sans-serif;
+
+    --color-nene-black: #151515;
+    --color-greek-cream: #F9F7F2;
+    --color-biscuit-gold: #DBCBAA;
+    --color-vitality-teal: #56827D;
+    --color-soft-grey: #999999;
+
+    --animate-float: float 6s ease-in-out infinite;
+    --animate-fade-in: fadeIn 0.5s ease-out forwards;
+
+    @keyframes float {
+
+        0%,
+        100% {
+            transform: translateY(0);
+        }
+
+        50% {
+            transform: translateY(-20px);
+        }
+    }
+
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+}
+
+@layer base {
+    body {
+        background-color: var(--color-greek-cream);
+        color: var(--color-nene-black);
+        font-family: var(--font-sans);
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+        font-family: var(--font-serif);
+        color: var(--color-nene-black);
+    }
+}

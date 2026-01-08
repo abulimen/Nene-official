@@ -1,0 +1,931 @@
+import React, { useState, useEffect } from 'react';
+import {
+    ShoppingBag, Menu, X, ChevronRight, Star, Instagram, Twitter, Facebook,
+    ArrowRight, Plus, Minus, Trash2, Heart, MapPin, Truck, CreditCard,
+    CheckCircle, HelpCircle, ChevronDown, ChevronUp, ArrowLeft, Quote
+} from 'lucide-react';
+
+// --- Assets & Data ---
+
+// Brand Colors - Light Mode Palette
+const COLORS = {
+    dark: '#1c1917',    // Stone 900 - Primary Text
+    medium: '#44403c',  // Stone 700 - Secondary Text
+    light: '#78716c',   // Stone 500 - Muted Text
+    bg: '#fafaf9',      // Stone 50 - Main Background
+    card: '#ffffff',    // White - Card Background
+    teal: '#0d9488',    // Teal 600 - Primary Brand Color
+    tealLight: '#ccfbf1',
+    gold: '#d97706',    // Amber 600 - Accent
+    goldLight: '#fef3c7',
+    cream: '#f5f5f4',   // Stone 100
+};
+
+// Product Data
+const PRODUCTS = [
+    {
+        id: 1,
+        name: "Unsweetened Greek Yogurt",
+        tagline: "High Protein • Zero Added Sugar",
+        price: 4500,
+        description: "The purest form of Greek yogurt. Rich, velvety texture with zero added sugars. Perfect for breakfast bowls or savory dips.",
+        accent: COLORS.teal,
+        accentBg: COLORS.tealLight,
+        nutrition: { cal: 120, protein: "18g", sugar: "0g" },
+        reviews: 124,
+        rating: 4.9,
+        ingredients: "Cultured Pasteurized Non-Fat Milk, Live Active Cultures.",
+        size: "500g"
+    },
+    {
+        id: 2,
+        name: "Sweetened Greek Yogurt",
+        tagline: "Naturally Sweetened • Creamy",
+        price: 4800,
+        description: "Indulge without the guilt. Gently sweetened with natural honey and monk fruit for a perfectly balanced treat.",
+        accent: COLORS.gold,
+        accentBg: COLORS.goldLight,
+        nutrition: { cal: 140, protein: "16g", sugar: "4g" },
+        reviews: 89,
+        rating: 4.8,
+        ingredients: "Cultured Pasteurized Milk, Honey, Monk Fruit Extract, Live Cultures.",
+        size: "500g"
+    },
+    {
+        id: 3,
+        name: "Vanilla Ice Cream",
+        tagline: "Creamy Indulgence • Keto Friendly",
+        price: 5500,
+        description: "Classic vanilla bean flavor wrapped in a rich, creamy texture. Low carb, high satisfaction, and absolutely delicious.",
+        accent: COLORS.dark,
+        accentBg: '#e7e5e4',
+        nutrition: { cal: 180, protein: "12g", sugar: "2g" },
+        reviews: 215,
+        rating: 4.9,
+        ingredients: "Cream, Milk Protein Isolate, Erythritol, Vanilla Bean, Stevia.",
+        size: "473ml"
+    }
+];
+
+const BLOG_POSTS = [
+    {
+        id: 1,
+        title: "The Science of Probiotics",
+        excerpt: "Why gut health is the new wealth, and how Nené supports your microbiome.",
+        date: "Oct 12, 2023",
+        category: "Wellness",
+        image: "https://images.unsplash.com/photo-1576670158645-30a561959888?auto=format&fit=crop&q=80&w=800"
+    },
+    {
+        id: 2,
+        title: "5 Morning Bowls to Start Your Day",
+        excerpt: "From fruity explosions to savory delights, elevate your breakfast game.",
+        date: "Oct 08, 2023",
+        category: "Recipes",
+        image: "https://images.unsplash.com/photo-1511690656952-34342d5c2895?auto=format&fit=crop&q=80&w=800"
+    },
+    {
+        id: 3,
+        title: "Vanilla: The Complex Orchid",
+        excerpt: "Tracing the journey of our vanilla beans from Madagascar to your tub.",
+        date: "Sep 28, 2023",
+        category: "Sourcing",
+        image: "https://images.unsplash.com/photo-1626202482271-e98279d411d2?auto=format&fit=crop&q=80&w=800"
+    }
+];
+
+const REVIEWS = [
+    { id: 1, user: "Chioma A.", text: "Finally a yogurt in Lagos that actually tastes authentic. The unsweetened one is a staple in my fridge now.", rating: 5 },
+    { id: 2, user: "Tunde B.", text: "Delivery was super fast to Lekki. The vanilla ice cream is surprisingly good for being keto.", rating: 5 },
+    { id: 3, user: "Sarah K.", text: "Love the packaging and the taste is divine. Highly recommend!", rating: 4 }
+];
+
+const FAQS = [
+    { q: "Do you deliver outside Lagos?", a: "Yes! We currently deliver to Lagos, Abuja, Port Harcourt, and Ibadan via refrigerated logistics." },
+    { q: "Is the packaging recyclable?", a: "Absolutely. Our Nené tubs are made from 100% recyclable BPA-free plastic." },
+    { q: "How long does it last?", a: "Unopened, our yogurts last 3 weeks in the fridge. Once opened, consume within 3 days for freshness." }
+];
+
+const NIGERIAN_STATES = [
+    "Lagos", "Abuja (FCT)", "Rivers", "Ogun", "Oyo", "Enugu", "Kano", "Kaduna"
+];
+
+// --- SVG Product Image Generator ---
+const ProductImage = ({ type, className }) => {
+    let color1, color2, label;
+    if (type === 'Unsweetened Greek Yogurt') {
+        color1 = "#0d9488"; color2 = "#115e59"; label = "Nené";
+    } else if (type === 'Sweetened Greek Yogurt') {
+        color1 = "#d97706"; color2 = "#92400e"; label = "Nené";
+    } else {
+        color1 = "#f5f5f4"; color2 = "#d6d3d1"; label = "Nené";
+    }
+
+    const isLight = type === 'Vanilla Ice Cream';
+
+    return (
+        <svg viewBox="0 0 200 200" className={className} xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+                    <feGaussianBlur in="SourceAlpha" stdDeviation="5" />
+                    <feOffset dx="0" dy="5" result="offsetblur" />
+                    <feComponentTransfer>
+                        <feFuncA type="linear" slope="0.2" />
+                    </feComponentTransfer>
+                    <feMerge>
+                        <feMergeNode in="offsetblur" />
+                        <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                </filter>
+            </defs>
+            <g filter="url(#shadow)">
+                {/* Lid */}
+                <ellipse cx="100" cy="60" rx="70" ry="20" fill={color2} />
+                <ellipse cx="100" cy="56" rx="68" ry="18" fill={color1} />
+
+                {/* Body */}
+                <path d="M35 60 Q 35 60 45 140 Q 50 170 100 170 Q 150 170 155 140 Q 165 60 165 60" fill={isLight ? '#ffffff' : '#1f2937'} />
+
+                {/* Label Area */}
+                <path d="M45 80 Q 45 80 50 130 Q 55 160 100 160 Q 145 160 150 130 Q 155 80 155 80" fill={color1} opacity="0.1" />
+
+                {/* Branding */}
+                <text x="100" y="115" fontFamily="sans-serif" fontWeight="bold" fontSize="28" fill={isLight ? '#1c1917' : '#ffffff'} textAnchor="middle" letterSpacing="-1">{label}</text>
+                <text x="100" y="135" fontFamily="sans-serif" fontSize="8" fill={isLight ? '#44403c' : '#d1d5db'} textAnchor="middle" letterSpacing="2" textTransform="uppercase">{type.split(' ')[0]}</text>
+            </g>
+        </svg>
+    );
+};
+
+// --- Helper Components ---
+
+const SectionTitle = ({ children, subtitle }) => (
+    <div className="text-center mb-12">
+        <h2 className="text-3xl md:text-4xl font-bold text-stone-900 mb-3 font-serif">{children}</h2>
+        {subtitle && <p className="text-stone-500 max-w-lg mx-auto">{subtitle}</p>}
+    </div>
+);
+
+// --- Main Sections ---
+
+// 1. Navbar
+const Navbar = ({ cartCount, onOpenCart, activeTab, onNavigate }) => {
+    const [scrolled, setScrolled] = useState(false);
+    const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+    useEffect(() => {
+        const handleScroll = () => setScrolled(window.scrollY > 20);
+        window.addEventListener('scroll', handleScroll);
+        return () => window.removeEventListener('scroll', handleScroll);
+    }, []);
+
+    return (
+        <>
+            <nav className={`fixed w-full z-50 transition-all duration-300 ${scrolled ? 'bg-white/90 backdrop-blur-md shadow-sm py-4' : 'bg-transparent py-6'}`}>
+                <div className="max-w-7xl mx-auto px-6 flex justify-between items-center">
+                    <div
+                        className="text-3xl font-bold tracking-tighter text-stone-900 cursor-pointer flex items-center gap-1"
+                        onClick={() => onNavigate('home')}
+                    >
+                        Nené<span className="text-teal-600 text-4xl leading-3">.</span>
+                    </div>
+
+                    <div className="hidden md:flex items-center gap-8">
+                        {['Home', 'Shop', 'Blog', 'Reviews', 'FAQ'].map((item) => (
+                            <button
+                                key={item}
+                                onClick={() => onNavigate(item.toLowerCase())}
+                                className={`text-sm font-medium uppercase tracking-widest transition-colors ${activeTab === item.toLowerCase() ? 'text-teal-600' : 'text-stone-500 hover:text-stone-900'
+                                    }`}
+                            >
+                                {item}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="flex items-center gap-6">
+                        <button
+                            onClick={onOpenCart}
+                            className="relative text-stone-900 hover:text-teal-600 transition-colors"
+                        >
+                            <ShoppingBag size={24} />
+                            {cartCount > 0 && (
+                                <span className="absolute -top-2 -right-2 bg-teal-600 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full">
+                                    {cartCount}
+                                </span>
+                            )}
+                        </button>
+                        <button className="md:hidden text-stone-900" onClick={() => setMobileMenuOpen(true)}>
+                            <Menu />
+                        </button>
+                    </div>
+                </div>
+            </nav>
+
+            {/* Mobile Menu Sidebar (Offcanvas) */}
+            <div
+                className={`md:hidden fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-[60] transition-opacity duration-300 ${mobileMenuOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+                onClick={() => setMobileMenuOpen(false)}
+            />
+            <div className={`md:hidden fixed top-0 left-0 h-full w-[300px] bg-white z-[70] transform transition-transform duration-300 shadow-2xl flex flex-col p-8 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+                <div className="flex justify-between items-center mb-12">
+                    <div className="text-2xl font-bold text-stone-900">Nené<span className="text-teal-600">.</span></div>
+                    <button onClick={() => setMobileMenuOpen(false)} className="text-stone-400 hover:text-stone-900">
+                        <X size={24} />
+                    </button>
+                </div>
+                <div className="flex flex-col gap-6">
+                    {['Home', 'Shop', 'Blog', 'Reviews', 'FAQ'].map((item) => (
+                        <button
+                            key={item}
+                            onClick={() => {
+                                onNavigate(item.toLowerCase());
+                                setMobileMenuOpen(false);
+                            }}
+                            className={`text-left text-xl font-medium transition-colors ${activeTab === item.toLowerCase() ? 'text-teal-600 font-bold' : 'text-stone-600'
+                                }`}
+                        >
+                            {item}
+                        </button>
+                    ))}
+                </div>
+                <div className="mt-auto pt-8 border-t border-stone-100 text-stone-500 text-sm">
+                    <p>© 2025 Nené Dairy Co.</p>
+                </div>
+            </div>
+        </>
+    );
+};
+
+// 2. Hero
+const Hero = ({ onShopNow }) => (
+    <section className="relative min-h-screen w-full flex items-center pt-20 bg-[#fafaf9] overflow-hidden">
+        <div className="absolute top-0 right-0 w-2/3 h-full bg-stone-100/50 rounded-l-[100px] -z-0" />
+
+        <div className="max-w-7xl mx-auto px-6 grid md:grid-cols-2 gap-12 items-center relative z-10">
+            <div className="space-y-8">
+                <div className="inline-flex items-center gap-2 px-4 py-1 border border-teal-200 rounded-full bg-teal-50 text-teal-700 text-xs font-bold tracking-widest uppercase">
+                    <span className="w-2 h-2 rounded-full bg-teal-500 animate-pulse" /> Available in Lagos & Abuja
+                </div>
+                <h1 className="text-5xl md:text-7xl font-bold text-stone-900 leading-[1.1] tracking-tight font-serif">
+                    Wholesome <br />
+                    Goodness. <br />
+                    <span className="text-teal-600 italic">Indulgent Flavour.</span>
+                </h1>
+                <p className="text-stone-600 text-lg max-w-md leading-relaxed">
+                    Crafted with simple ingredients and patience. Whether you crave the tang of authentic Greek yogurt or the richness of premium vanilla, Nené delivers.
+                </p>
+                <div className="flex gap-4">
+                    <button
+                        onClick={onShopNow}
+                        className="bg-stone-900 hover:bg-teal-600 text-white px-8 py-4 rounded-full font-bold text-sm tracking-widest uppercase transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-1"
+                    >
+                        Shop Now
+                    </button>
+                    <button className="flex items-center gap-2 text-stone-900 font-bold text-sm tracking-widest uppercase hover:text-teal-600 transition-colors px-4 py-4">
+                        View Gallery <ArrowRight size={16} />
+                    </button>
+                </div>
+            </div>
+
+            <div className="relative h-[500px] flex items-center justify-center">
+                <div className="absolute inset-0 bg-gradient-to-tr from-teal-100/30 to-orange-100/30 rounded-full blur-3xl" />
+                <div className="relative w-full h-full flex justify-center items-center">
+                    {/* Composition of 3 products */}
+                    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 hover:z-30 transition-all duration-300 hover:scale-110">
+                        <ProductImage type="Sweetened Greek Yogurt" className="w-72 h-72 drop-shadow-2xl" />
+                    </div>
+                    <div className="absolute top-1/2 left-0 transform -translate-y-1/2 -translate-x-10 z-10 scale-90 hover:scale-105 transition-all duration-300">
+                        <ProductImage type="Unsweetened Greek Yogurt" className="w-64 h-64 drop-shadow-xl" />
+                    </div>
+                    <div className="absolute top-1/2 right-0 transform -translate-y-1/2 translate-x-10 z-10 scale-90 hover:scale-105 transition-all duration-300">
+                        <ProductImage type="Vanilla Ice Cream" className="w-64 h-64 drop-shadow-xl" />
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+);
+
+// 3. Shop Grid
+const Shop = ({ onProductClick, onAddToCart }) => (
+    <section className="py-24 px-6 bg-white">
+        <div className="max-w-7xl mx-auto">
+            <SectionTitle subtitle="Made with 100% Nigerian milk and natural ingredients.">Our Collection</SectionTitle>
+
+            <div className="grid md:grid-cols-3 gap-10">
+                {PRODUCTS.map(product => (
+                    <div
+                        key={product.id}
+                        onClick={() => onProductClick(product)}
+                        className="group cursor-pointer"
+                    >
+                        <div className="bg-stone-50 rounded-3xl p-8 mb-6 relative overflow-hidden transition-all duration-500 group-hover:shadow-xl group-hover:bg-stone-100 text-center">
+                            <div className="absolute top-4 right-4 bg-white px-3 py-1 rounded-full text-xs font-bold shadow-sm">
+                                ₦{product.price.toLocaleString()}
+                            </div>
+                            <div className="transform transition-transform duration-500 group-hover:scale-110 py-8">
+                                <ProductImage type={product.name} className="w-48 h-48 mx-auto drop-shadow-lg" />
+                            </div>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onAddToCart(product); }}
+                                className="absolute bottom-4 right-4 w-10 h-10 bg-stone-900 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all transform translate-y-4 group-hover:translate-y-0 hover:bg-teal-600"
+                            >
+                                <Plus size={20} />
+                            </button>
+                        </div>
+
+                        <div className="text-center space-y-2">
+                            <h3 className="text-xl font-bold text-stone-900">{product.name}</h3>
+                            <p className="text-stone-500 text-sm">{product.tagline}</p>
+                            <div className="flex justify-center gap-1 text-amber-400">
+                                {[...Array(5)].map((_, i) => <Star key={i} size={14} fill="currentColor" />)}
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    </section>
+);
+
+// 4. Product Details Page
+const ProductDetail = ({ product, onAddToCart, onBack }) => {
+    if (!product) return null;
+
+    return (
+        <div className="pt-24 pb-12 px-6 min-h-screen bg-white">
+            <div className="max-w-6xl mx-auto">
+                <button onClick={onBack} className="flex items-center text-stone-500 hover:text-stone-900 mb-8">
+                    <ArrowLeft size={20} className="mr-2" /> Back to Shop
+                </button>
+
+                <div className="grid md:grid-cols-2 gap-16 items-center">
+                    <div className="bg-stone-50 rounded-[3rem] p-12 flex items-center justify-center relative">
+                        <ProductImage type={product.name} className="w-full max-w-md drop-shadow-2xl animate-float" />
+                        <div className="absolute bottom-8 left-8 flex gap-4">
+                            <div className="text-center">
+                                <p className="text-xs text-stone-500 uppercase tracking-widest">Calories</p>
+                                <p className="font-bold text-stone-900">{product.nutrition.cal}</p>
+                            </div>
+                            <div className="text-center">
+                                <p className="text-xs text-stone-500 uppercase tracking-widest">Protein</p>
+                                <p className="font-bold text-stone-900">{product.nutrition.protein}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="space-y-8">
+                        <div>
+                            <h1 className="text-4xl md:text-5xl font-serif font-bold text-stone-900 mb-2">{product.name}</h1>
+                            <div className="flex items-center gap-4 mb-4">
+                                <span className="text-2xl font-medium text-teal-600">₦{product.price.toLocaleString()}</span>
+                                <div className="flex items-center gap-1 text-amber-400 text-sm">
+                                    <Star size={16} fill="currentColor" />
+                                    <span className="text-stone-900 font-bold">{product.rating}</span>
+                                    <span className="text-stone-400">({product.reviews} reviews)</span>
+                                </div>
+                            </div>
+                            <p className="text-stone-600 leading-relaxed text-lg">
+                                {product.description}
+                            </p>
+                        </div>
+
+                        <div className="p-6 bg-stone-50 rounded-xl space-y-4 border border-stone-100">
+                            <div className="flex justify-between text-sm border-b border-stone-200 pb-2">
+                                <span className="text-stone-500">Size</span>
+                                <span className="font-bold text-stone-900">{product.size}</span>
+                            </div>
+                            <div className="flex justify-between text-sm border-b border-stone-200 pb-2">
+                                <span className="text-stone-500">Ingredients</span>
+                                <span className="font-medium text-stone-900 text-right max-w-[200px]">{product.ingredients}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-stone-500">Delivery</span>
+                                <span className="font-medium text-teal-600">Available in Lagos & Abuja</span>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-4">
+                            <button
+                                onClick={() => onAddToCart(product)}
+                                className="flex-1 bg-stone-900 text-white py-4 rounded-full font-bold uppercase tracking-widest hover:bg-teal-600 transition-colors shadow-lg"
+                            >
+                                Add to Cart
+                            </button>
+                            <button className="w-14 h-14 border border-stone-200 rounded-full flex items-center justify-center text-stone-400 hover:text-red-500 hover:border-red-200 transition-colors">
+                                <Heart size={24} />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Reviews Section inside Product Page */}
+                <div className="mt-24">
+                    <h3 className="text-2xl font-bold mb-8">Customer Reviews</h3>
+                    <div className="grid md:grid-cols-2 gap-6">
+                        {REVIEWS.map(review => (
+                            <div key={review.id} className="bg-stone-50 p-6 rounded-xl">
+                                <div className="flex gap-1 text-amber-400 mb-2">
+                                    {[...Array(review.rating)].map((_, i) => <Star key={i} size={14} fill="currentColor" />)}
+                                </div>
+                                <p className="text-stone-700 mb-4 italic">"{review.text}"</p>
+                                <p className="text-xs font-bold text-stone-900 uppercase tracking-widest">- {review.user}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// 5. Gallery & Features
+const Gallery = () => (
+    <section className="py-24 bg-stone-900 text-white overflow-hidden">
+        <div className="max-w-7xl mx-auto px-6">
+            <div className="grid md:grid-cols-2 gap-16 items-center">
+                <div>
+                    <h2 className="text-4xl font-serif font-bold mb-6">From our farm to your fridge.</h2>
+                    <p className="text-stone-400 mb-8 text-lg leading-relaxed">
+                        We believe in keeping things simple. Our milk comes from grass-fed cows in locally managed farms in Oyo State. We process in small batches to ensure texture, taste, and probiotic integrity.
+                    </p>
+                    <ul className="space-y-4 mb-8">
+                        {[
+                            "100% Nigerian Sourced Milk",
+                            "Zero Artificial Preservatives",
+                            "Recyclable Packaging",
+                            "Cold Chain Delivery Guaranteed"
+                        ].map(item => (
+                            <li key={item} className="flex items-center gap-3 text-stone-300">
+                                <CheckCircle size={20} className="text-teal-500" /> {item}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                    <img
+                        src="https://images.unsplash.com/photo-1488477181946-6428a0291777?auto=format&fit=crop&q=80&w=600"
+                        alt="Yogurt Bowl"
+                        className="rounded-2xl w-full h-64 object-cover opacity-80 hover:opacity-100 transition-opacity"
+                    />
+                    <img
+                        src="https://images.unsplash.com/photo-1563379926898-05f4575a45d8?auto=format&fit=crop&q=80&w=600"
+                        alt="Spoon texture"
+                        className="rounded-2xl w-full h-64 object-cover mt-8 opacity-80 hover:opacity-100 transition-opacity"
+                    />
+                </div>
+            </div>
+        </div>
+    </section>
+);
+
+// 5.5 Testimonials (Homepage)
+const Testimonials = () => (
+    <section className="py-24 px-6 bg-teal-50/50">
+        <div className="max-w-7xl mx-auto">
+            <SectionTitle subtitle="Join thousands of happy customers enjoying Nené.">What People Say</SectionTitle>
+            <div className="grid md:grid-cols-3 gap-8">
+                {REVIEWS.map((review) => (
+                    <div key={review.id} className="bg-white p-8 rounded-2xl shadow-sm relative border border-teal-100">
+                        <Quote className="absolute top-8 right-8 text-teal-100 rotate-180" size={40} />
+                        <div className="flex gap-1 text-amber-400 mb-6">
+                            {[...Array(review.rating)].map((_, i) => <Star key={i} size={16} fill="currentColor" />)}
+                        </div>
+                        <p className="text-stone-700 text-lg italic leading-relaxed mb-6 relative z-10">
+                            "{review.text}"
+                        </p>
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-stone-200 rounded-full flex items-center justify-center font-bold text-stone-500">
+                                {review.user.charAt(0)}
+                            </div>
+                            <div>
+                                <p className="font-bold text-stone-900 text-sm">{review.user}</p>
+                                <p className="text-xs text-stone-500">Verified Buyer</p>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    </section>
+);
+
+// 6. Delivery Info
+const DeliveryInfo = () => (
+    <section className="py-16 px-6 bg-white border-y border-stone-100">
+        <div className="max-w-4xl mx-auto text-center">
+            <Truck size={48} className="mx-auto text-teal-600 mb-6" />
+            <h2 className="text-3xl font-bold text-stone-900 mb-4">Nationwide Delivery</h2>
+            <p className="text-stone-600 mb-8">
+                We currently deliver to the following states via our refrigerated logistics partners.
+                Orders placed before 12 PM are processed same-day.
+            </p>
+            <div className="flex flex-wrap justify-center gap-3">
+                {NIGERIAN_STATES.map(state => (
+                    <span key={state} className="px-4 py-2 bg-stone-50 rounded-lg text-stone-700 font-medium shadow-sm border border-stone-200">
+                        {state}
+                    </span>
+                ))}
+            </div>
+        </div>
+    </section>
+);
+
+// 7. Blog Section
+const Blog = () => (
+    <section className="py-24 px-6 bg-white">
+        <div className="max-w-7xl mx-auto">
+            <SectionTitle subtitle="Wellness tips, recipes, and stories from the dairy.">The Nené Journal</SectionTitle>
+            <div className="grid md:grid-cols-3 gap-8">
+                {BLOG_POSTS.map(post => (
+                    <div key={post.id} className="group cursor-pointer">
+                        <div className="h-64 w-full rounded-2xl mb-6 overflow-hidden relative">
+                            <img
+                                src={post.image}
+                                alt={post.title}
+                                className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-500"
+                            />
+                            <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1 rounded-md text-stone-900 text-xs font-bold uppercase tracking-widest">
+                                {post.category}
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-3 text-teal-600 text-xs font-bold uppercase tracking-widest mb-3">
+                            <span>{post.date}</span>
+                        </div>
+                        <h3 className="text-xl font-bold text-stone-900 mb-3 group-hover:text-teal-600 transition-colors font-serif">
+                            {post.title}
+                        </h3>
+                        <p className="text-stone-500 text-sm leading-relaxed mb-4">
+                            {post.excerpt}
+                        </p>
+                        <div className="flex items-center gap-2 text-stone-900 text-sm font-bold group-hover:gap-4 transition-all">
+                            Read Article <ArrowRight size={16} className="text-teal-600" />
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    </section>
+);
+
+// 8. FAQ Section
+const FAQ = () => {
+    const [openIndex, setOpenIndex] = useState(null);
+
+    return (
+        <section className="py-24 px-6 bg-stone-50">
+            <div className="max-w-3xl mx-auto">
+                <SectionTitle>Frequently Asked Questions</SectionTitle>
+                <div className="space-y-4">
+                    {FAQS.map((faq, index) => (
+                        <div key={index} className="bg-white rounded-xl p-6 shadow-sm cursor-pointer" onClick={() => setOpenIndex(openIndex === index ? null : index)}>
+                            <div className="flex justify-between items-center">
+                                <h4 className="font-bold text-stone-900">{faq.q}</h4>
+                                {openIndex === index ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                            </div>
+                            {openIndex === index && (
+                                <p className="mt-4 text-stone-600 text-sm leading-relaxed animate-fade-in">
+                                    {faq.a}
+                                </p>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </section>
+    );
+};
+
+// 9. Checkout Page
+const Checkout = ({ cart, total, onBack }) => (
+    <div className="pt-24 pb-12 px-6 min-h-screen bg-stone-50">
+        <div className="max-w-5xl mx-auto">
+            <button onClick={onBack} className="flex items-center text-stone-500 hover:text-stone-900 mb-8">
+                <ArrowLeft size={20} className="mr-2" /> Back to Shop
+            </button>
+
+            <div className="grid md:grid-cols-3 gap-8">
+                <div className="md:col-span-2 space-y-6">
+                    <div className="bg-white p-8 rounded-2xl shadow-sm">
+                        <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
+                            <MapPin className="text-teal-600" /> Shipping Details
+                        </h2>
+                        <form className="grid grid-cols-2 gap-4">
+                            <input placeholder="First Name" className="bg-stone-50 p-3 rounded-lg w-full" />
+                            <input placeholder="Last Name" className="bg-stone-50 p-3 rounded-lg w-full" />
+                            <input placeholder="Address" className="col-span-2 bg-stone-50 p-3 rounded-lg w-full" />
+                            <input placeholder="City" className="bg-stone-50 p-3 rounded-lg w-full" />
+                            <select className="bg-stone-50 p-3 rounded-lg w-full">
+                                <option>Select State</option>
+                                {NIGERIAN_STATES.map(s => <option key={s}>{s}</option>)}
+                            </select>
+                            <input placeholder="Phone Number" className="col-span-2 bg-stone-50 p-3 rounded-lg w-full" />
+                        </form>
+                    </div>
+
+                    <div className="bg-white p-8 rounded-2xl shadow-sm">
+                        <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
+                            <CreditCard className="text-teal-600" /> Payment
+                        </h2>
+                        <div className="border border-teal-200 bg-teal-50 p-4 rounded-xl flex items-center justify-between cursor-pointer ring-2 ring-teal-500">
+                            <div className="flex items-center gap-3">
+                                <div className="w-4 h-4 rounded-full bg-teal-600" />
+                                <span className="font-bold text-stone-900">Paystack</span>
+                            </div>
+                            <div className="flex gap-2">
+                                <div className="w-8 h-5 bg-stone-300 rounded" /> {/* Visa placeholder */}
+                                <div className="w-8 h-5 bg-stone-300 rounded" /> {/* MC placeholder */}
+                            </div>
+                        </div>
+                        <p className="text-xs text-stone-500 mt-4 flex items-center gap-1">
+                            <LockIcon size={12} /> Secure payment processing by Paystack
+                        </p>
+                    </div>
+                </div>
+
+                <div className="bg-white p-8 rounded-2xl shadow-sm h-fit">
+                    <h3 className="font-bold text-lg mb-4">Order Summary</h3>
+                    <div className="space-y-4 mb-6">
+                        {cart.map(item => (
+                            <div key={item.id} className="flex justify-between text-sm">
+                                <span className="text-stone-600">{item.quantity}x {item.name}</span>
+                                <span className="font-medium">₦{(item.price * item.quantity).toLocaleString()}</span>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="border-t border-stone-100 pt-4 space-y-2">
+                        <div className="flex justify-between text-stone-500">
+                            <span>Subtotal</span>
+                            <span>₦{total.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between text-stone-500">
+                            <span>Shipping</span>
+                            <span>₦1,500</span>
+                        </div>
+                        <div className="flex justify-between text-xl font-bold text-stone-900 pt-2">
+                            <span>Total</span>
+                            <span>₦{(total + 1500).toLocaleString()}</span>
+                        </div>
+                    </div>
+                    <button className="w-full bg-teal-600 hover:bg-teal-700 text-white py-4 rounded-xl font-bold mt-8 shadow-lg transition-colors">
+                        Pay Now ₦{(total + 1500).toLocaleString()}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+);
+
+const LockIcon = ({ size }) => (
+    <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+    >
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+    </svg>
+);
+
+// 10. Footer
+const Footer = ({ onNavigate }) => (
+    <footer className="bg-stone-900 text-white pt-20 pb-10 px-6">
+        <div className="max-w-7xl mx-auto grid md:grid-cols-4 gap-12 mb-20">
+            <div>
+                <div className="text-2xl font-bold mb-6">Nené<span className="text-teal-500">.</span></div>
+                <p className="text-stone-400 text-sm leading-relaxed mb-6">
+                    Simple ingredients. Authentic culture. A taste of the good life in every spoon.
+                </p>
+                <div className="flex gap-4 text-stone-400">
+                    <Instagram size={20} className="hover:text-teal-400 cursor-pointer" />
+                    <Twitter size={20} className="hover:text-teal-400 cursor-pointer" />
+                    <Facebook size={20} className="hover:text-teal-400 cursor-pointer" />
+                </div>
+            </div>
+
+            <div>
+                <h4 className="font-bold mb-6">Shop</h4>
+                <ul className="space-y-4 text-sm text-stone-400">
+                    <li className="hover:text-teal-400 cursor-pointer" onClick={() => onNavigate('shop')}>All Products</li>
+                    <li className="hover:text-teal-400 cursor-pointer">Bundles</li>
+                    <li className="hover:text-teal-400 cursor-pointer">Subscriptions</li>
+                </ul>
+            </div>
+
+            <div>
+                <h4 className="font-bold mb-6">Support</h4>
+                <ul className="space-y-4 text-sm text-stone-400">
+                    <li className="hover:text-teal-400 cursor-pointer" onClick={() => onNavigate('faq')}>FAQ</li>
+                    <li className="hover:text-teal-400 cursor-pointer">Shipping Policy</li>
+                    <li className="hover:text-teal-400 cursor-pointer">Contact Us</li>
+                </ul>
+            </div>
+
+            <div>
+                <h4 className="font-bold mb-6">Newsletter</h4>
+                <p className="text-stone-400 text-sm mb-4">Get 10% off your first order.</p>
+                <div className="flex">
+                    <input
+                        type="email"
+                        placeholder="Email address"
+                        className="bg-stone-800 border-none text-white text-sm px-4 py-3 rounded-l-lg focus:ring-1 focus:ring-teal-500 w-full"
+                    />
+                    <button className="bg-teal-600 text-white px-4 py-3 rounded-r-lg font-bold hover:bg-teal-500">
+                        <ArrowRight size={18} />
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div className="text-center text-stone-600 text-xs border-t border-stone-800 pt-8">
+            © 2025 Nené Dairy Co. Lagos, Nigeria. All rights reserved.
+        </div>
+    </footer>
+);
+
+// --- Main App Component ---
+
+const App = () => {
+    const [activeTab, setActiveTab] = useState('home');
+    const [cartOpen, setCartOpen] = useState(false);
+    const [selectedProduct, setSelectedProduct] = useState(null);
+    const [cart, setCart] = useState([]);
+
+    // Scroll to top on tab change
+    useEffect(() => {
+        window.scrollTo(0, 0);
+    }, [activeTab, selectedProduct]);
+
+    const handleAddToCart = (product) => {
+        setCart(prev => {
+            const existing = prev.find(item => item.id === product.id);
+            if (existing) {
+                return prev.map(item =>
+                    item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+                );
+            }
+            return [...prev, { ...product, quantity: 1 }];
+        });
+        setCartOpen(true);
+    };
+
+    const updateQuantity = (id, delta) => {
+        setCart(prev => prev.map(item => {
+            if (item.id === id) {
+                const newQty = item.quantity + delta;
+                return newQty > 0 ? { ...item, quantity: newQty } : item;
+            }
+            return item;
+        }));
+    };
+
+    const removeFromCart = (id) => {
+        setCart(prev => prev.filter(item => item.id !== id));
+    };
+
+    // Navigation Handler
+    const handleNavigate = (tab) => {
+        setActiveTab(tab);
+        setSelectedProduct(null);
+    };
+
+    const handleProductClick = (product) => {
+        setSelectedProduct(product);
+        setActiveTab('product-detail');
+    };
+
+    const renderContent = () => {
+        if (activeTab === 'checkout') {
+            return <Checkout cart={cart} total={cart.reduce((acc, item) => acc + item.price * item.quantity, 0)} onBack={() => setActiveTab('shop')} />;
+        }
+
+        if (selectedProduct) {
+            return <ProductDetail product={selectedProduct} onAddToCart={handleAddToCart} onBack={() => handleNavigate('shop')} />;
+        }
+
+        switch (activeTab) {
+            case 'home':
+                return (
+                    <>
+                        <Hero onShopNow={() => handleNavigate('shop')} />
+                        <Testimonials />
+                        <Shop onProductClick={handleProductClick} onAddToCart={handleAddToCart} />
+                        <Gallery />
+                        <DeliveryInfo />
+                        <FAQ />
+                        <Blog />
+                    </>
+                );
+            case 'shop':
+                return (
+                    <div className="pt-20">
+                        <Shop onProductClick={handleProductClick} onAddToCart={handleAddToCart} />
+                    </div>
+                );
+            case 'blog':
+                return <div className="pt-20"><Blog /></div>;
+            case 'faq':
+                return <div className="pt-20"><FAQ /></div>;
+            case 'reviews':
+                return (
+                    <div className="pt-32 pb-20 px-6 max-w-4xl mx-auto">
+                        <SectionTitle subtitle="See what our community is saying">Reviews</SectionTitle>
+                        <div className="grid md:grid-cols-2 gap-6">
+                            {REVIEWS.map(review => (
+                                <div key={review.id} className="bg-stone-50 p-8 rounded-xl border border-stone-100">
+                                    <div className="flex gap-1 text-amber-400 mb-4">
+                                        {[...Array(review.rating)].map((_, i) => <Star key={i} size={16} fill="currentColor" />)}
+                                    </div>
+                                    <p className="text-stone-700 mb-6 text-lg italic">"{review.text}"</p>
+                                    <p className="font-bold text-stone-900 uppercase tracking-widest text-sm">- {review.user}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            default:
+                return <Hero onShopNow={() => handleNavigate('shop')} />;
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-[#fafaf9] font-sans text-stone-900 selection:bg-teal-200 selection:text-teal-900">
+            <Navbar
+                cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)}
+                onOpenCart={() => setCartOpen(true)}
+                activeTab={activeTab}
+                onNavigate={handleNavigate}
+            />
+
+            {/* Cart Drawer */}
+            <div className={`fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-[60] transition-opacity duration-300 ${cartOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`} onClick={() => setCartOpen(false)} />
+
+            <div className={`fixed top-0 right-0 h-full w-full md:w-[450px] bg-white z-[70] transform transition-transform duration-300 shadow-2xl flex flex-col ${cartOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+                <div className="p-8 border-b border-stone-100 flex justify-between items-center bg-stone-50">
+                    <h2 className="text-2xl font-bold font-serif">Your Order</h2>
+                    <button onClick={() => setCartOpen(false)} className="text-stone-400 hover:text-stone-900"><X size={24} /></button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-8 space-y-6">
+                    {cart.length === 0 ? (
+                        <div className="text-center py-20">
+                            <ShoppingBag size={48} className="mx-auto text-stone-200 mb-4" />
+                            <p className="text-stone-500">Your bag is empty.</p>
+                        </div>
+                    ) : (
+                        cart.map(item => (
+                            <div key={item.id} className="flex gap-4 bg-stone-50 p-4 rounded-xl border border-stone-100">
+                                <div className="w-20 h-20 flex items-center justify-center shrink-0 bg-white rounded-lg p-2">
+                                    <ProductImage type={item.name} className="w-full h-full" />
+                                </div>
+                                <div className="flex-1">
+                                    <div className="flex justify-between mb-1">
+                                        <h4 className="font-bold text-stone-900">{item.name}</h4>
+                                        <span className="font-medium text-teal-600">₦{(item.price * item.quantity).toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center mt-4">
+                                        <div className="flex items-center gap-3 bg-white rounded-full px-3 py-1 border border-stone-200">
+                                            <button onClick={() => updateQuantity(item.id, -1)}><Minus size={14} /></button>
+                                            <span className="text-sm font-bold w-4 text-center">{item.quantity}</span>
+                                            <button onClick={() => updateQuantity(item.id, 1)}><Plus size={14} /></button>
+                                        </div>
+                                        <button onClick={() => removeFromCart(item.id)} className="text-stone-400 hover:text-red-500"><Trash2 size={18} /></button>
+                                    </div>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+
+                {cart.length > 0 && (
+                    <div className="p-8 border-t border-stone-100 bg-stone-50">
+                        <div className="flex justify-between mb-4 text-xl font-bold">
+                            <span>Total</span>
+                            <span>₦{cart.reduce((acc, item) => acc + item.price * item.quantity, 0).toLocaleString()}</span>
+                        </div>
+                        <button
+                            onClick={() => { setCartOpen(false); setActiveTab('checkout'); }}
+                            className="w-full bg-stone-900 hover:bg-teal-600 text-white py-4 rounded-full font-bold uppercase tracking-widest transition-all"
+                        >
+                            Checkout
+                        </button>
+                    </div>
+                )}
+            </div>
+
+            <main>
+                {renderContent()}
+            </main>
+
+            <Footer onNavigate={handleNavigate} />
+        </div>
+    );
+};
+
+export default App;

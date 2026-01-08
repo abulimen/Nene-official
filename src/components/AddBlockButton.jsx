@@ -1,0 +1,31 @@
+/**
+ * AddBlockButton Component
+ *
+ * Shows a button between blocks to add new content
+ * Appears on hover for better UX
+ */
+"use client";
+import React, { useState } from "react";
+import { Plus } from "lucide-react";
+import { Button } from "./ui/button";
+export function AddBlockButton({ onAdd, position = "after", }) {
+    const [isHovered, setIsHovered] = useState(false);
+    return (<div className="group mx-30 relative h-1 flex items-center justify-center transition-all" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
+      {/* Hover area - full width */}
+      <div className="absolute inset-0 w-full"/>
+
+      {/* Add button - shows on hover */}
+      <Button variant="outline" size="sm" className={`
+          relative z-10 gap-1 h-6 px-2 transition-all shadow-sm
+          ${isHovered
+            ? "opacity-100 scale-100"
+            : "opacity-0 scale-95 pointer-events-none"}
+        `} onClick={(e) => {
+            e.stopPropagation();
+            onAdd();
+        }}>
+        <Plus className="h-3 w-3"/>
+        <span className="text-xs">Add block</span>
+      </Button>
+    </div>);
+}
