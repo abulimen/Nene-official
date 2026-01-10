@@ -1,13 +1,16 @@
-const FAQ = require('../models/FAQ');
+const { supabase } = require('../utils/supabase');
 
 // Public: Get all active FAQs
 exports.getAllFAQs = async (req, res) => {
     try {
-        const faqs = await FAQ.findAll({
-            where: { is_active: true },
-            order: [['display_order', 'ASC'], ['created_at', 'DESC']],
-            attributes: ['id', 'question', 'answer', 'category', 'display_order']
-        });
+        const { data: faqs, error } = await supabase
+            .from('faqs')
+            .select('id, question, answer, category, display_order')
+            .eq('is_active', true)
+            .order('display_order', { ascending: true })
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -28,9 +31,13 @@ exports.getAllFAQs = async (req, res) => {
 // Admin: Get all FAQs (including inactive)
 exports.getAdminFAQs = async (req, res) => {
     try {
-        const faqs = await FAQ.findAll({
-            order: [['display_order', 'ASC'], ['created_at', 'DESC']]
-        });
+        const { data: faqs, error } = await supabase
+            .from('faqs')
+            .select('*')
+            .order('display_order', { ascending: true })
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -63,13 +70,19 @@ exports.createFAQ = async (req, res) => {
             });
         }
 
-        const faq = await FAQ.create({
-            question,
-            answer,
-            category: category || null,
-            display_order: display_order || 0,
-            is_active: is_active !== undefined ? is_active : true
-        });
+        const { data: faq, error } = await supabase
+            .from('faqs')
+            .insert({
+                question,
+                answer,
+                category: category || null,
+                display_order: display_order || 0,
+                is_active: is_active !== undefined ? is_active : true
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
 
         res.status(201).json({
             success: true,
@@ -93,8 +106,14 @@ exports.updateFAQ = async (req, res) => {
         const { id } = req.params;
         const { question, answer, category, display_order, is_active } = req.body;
 
-        const faq = await FAQ.findByPk(id);
-        if (!faq) {
+        // Check if FAQ exists
+        const { data: existingFaq, error: fetchError } = await supabase
+            .from('faqs')
+            .select('*')
+            .eq('id', id)
+            .single();
+
+        if (fetchError || !existingFaq) {
             return res.status(404).json({
                 success: false,
                 error: {
@@ -104,13 +123,20 @@ exports.updateFAQ = async (req, res) => {
             });
         }
 
-        await faq.update({
-            question: question || faq.question,
-            answer: answer || faq.answer,
-            category: category !== undefined ? category : faq.category,
-            display_order: display_order !== undefined ? display_order : faq.display_order,
-            is_active: is_active !== undefined ? is_active : faq.is_active
-        });
+        const { data: faq, error } = await supabase
+            .from('faqs')
+            .update({
+                question: question || existingFaq.question,
+                answer: answer || existingFaq.answer,
+                category: category !== undefined ? category : existingFaq.category,
+                display_order: display_order !== undefined ? display_order : existingFaq.display_order,
+                is_active: is_active !== undefined ? is_active : existingFaq.is_active
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -133,8 +159,14 @@ exports.deleteFAQ = async (req, res) => {
     try {
         const { id } = req.params;
 
-        const faq = await FAQ.findByPk(id);
-        if (!faq) {
+        // Check if FAQ exists
+        const { data: existingFaq, error: fetchError } = await supabase
+            .from('faqs')
+            .select('id')
+            .eq('id', id)
+            .single();
+
+        if (fetchError || !existingFaq) {
             return res.status(404).json({
                 success: false,
                 error: {
@@ -144,7 +176,12 @@ exports.deleteFAQ = async (req, res) => {
             });
         }
 
-        await faq.destroy();
+        const { error } = await supabase
+            .from('faqs')
+            .delete()
+            .eq('id', id);
+
+        if (error) throw error;
 
         res.json({
             success: true,

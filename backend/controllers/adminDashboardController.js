@@ -1,22 +1,19 @@
-const { models, sequelize } = require('../models');
-const { Order, OrderItem, Product, Customer } = models;
-const { Op } = require('sequelize');
+const { supabase } = require('../utils/supabase');
 
 const getDashboardStats = async (req, res) => {
     try {
         // 1. Total Revenue (excluding cancelled orders)
-        const revenueResult = await Order.sum('total_amount', {
-            where: {
-                order_status: { [Op.ne]: 'cancelled' }
-            }
-        });
-        const totalRevenue = revenueResult || 0;
+        const { data: revenueData } = await supabase
+            .from('orders')
+            .select('total_amount')
+            .neq('order_status', 'cancelled');
+
+        const totalRevenue = revenueData?.reduce((sum, order) => sum + parseFloat(order.total_amount || 0), 0) || 0;
 
         // 2. Order Counts by Status
-        const orderCounts = await Order.findAll({
-            attributes: ['order_status', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
-            group: ['order_status']
-        });
+        const { data: allOrders } = await supabase
+            .from('orders')
+            .select('order_status');
 
         const orderStats = {
             total: 0,
@@ -27,65 +24,92 @@ const getDashboardStats = async (req, res) => {
             cancelled: 0
         };
 
-        orderCounts.forEach(stat => {
-            const status = stat.order_status;
-            const count = parseInt(stat.get('count'));
-            orderStats[status] = count;
-            orderStats.total += count;
+        allOrders?.forEach(order => {
+            orderStats[order.order_status] = (orderStats[order.order_status] || 0) + 1;
+            orderStats.total++;
         });
 
         // 3. Product Stats
-        const totalProducts = await Product.count();
-        const activeProducts = await Product.scope('active').count();
-        const outOfStockProducts = await Product.scope('active').count({
-            where: { is_available: false }
-        });
+        const { count: totalProducts } = await supabase
+            .from('products')
+            .select('*', { count: 'exact', head: true });
+
+        const { count: activeProducts } = await supabase
+            .from('products')
+            .select('*', { count: 'exact', head: true })
+            .eq('is_active', true);
+
+        const { count: outOfStockProducts } = await supabase
+            .from('products')
+            .select('*', { count: 'exact', head: true })
+            .eq('is_active', true)
+            .eq('is_available', false);
 
         // 4. Customer Stats
-        const totalCustomers = await Customer.count();
+        const { count: totalCustomers } = await supabase
+            .from('customers')
+            .select('*', { count: 'exact', head: true });
 
         // 5. Sales Chart Data (Last 30 Days)
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-        const salesData = await Order.findAll({
-            attributes: [
-                [sequelize.fn('DATE', sequelize.col('created_at')), 'date'],
-                [sequelize.fn('SUM', sequelize.col('total_amount')), 'revenue'],
-                [sequelize.fn('COUNT', sequelize.col('id')), 'orders']
-            ],
-            where: {
-                created_at: { [Op.gte]: thirtyDaysAgo },
-                order_status: { [Op.ne]: 'cancelled' }
-            },
-            group: [sequelize.fn('DATE', sequelize.col('created_at'))],
-            order: [[sequelize.fn('DATE', sequelize.col('created_at')), 'ASC']]
+        const { data: recentOrders } = await supabase
+            .from('orders')
+            .select('created_at, total_amount, id')
+            .gte('created_at', thirtyDaysAgo.toISOString())
+            .neq('order_status', 'cancelled')
+            .order('created_at', { ascending: true });
+
+        // Group by date for chart
+        const salesByDate = {};
+        recentOrders?.forEach(order => {
+            const date = order.created_at.split('T')[0];
+            if (!salesByDate[date]) {
+                salesByDate[date] = { date, revenue: 0, orders: 0 };
+            }
+            salesByDate[date].revenue += parseFloat(order.total_amount || 0);
+            salesByDate[date].orders++;
         });
+        const salesChart = Object.values(salesByDate);
 
         // 6. Top Selling Products
-        const topProducts = await OrderItem.findAll({
-            attributes: [
-                'product_id',
-                'product_name',
-                [sequelize.fn('SUM', sequelize.col('OrderItem.quantity')), 'total_sold'],
-                [sequelize.fn('SUM', sequelize.col('OrderItem.subtotal')), 'total_revenue']
-            ],
-            include: [{
-                model: Order,
-                attributes: [],
-                where: { order_status: { [Op.ne]: 'cancelled' } }
-            }],
-            group: ['product_id', 'product_name'],
-            order: [[sequelize.fn('SUM', sequelize.col('OrderItem.quantity')), 'DESC']],
-            limit: 5
+        const { data: orderItems } = await supabase
+            .from('order_items')
+            .select(`
+                product_id,
+                product_name,
+                quantity,
+                subtotal,
+                order:orders!inner(order_status)
+            `)
+            .neq('order.order_status', 'cancelled');
+
+        const productSales = {};
+        orderItems?.forEach(item => {
+            const key = item.product_id || item.product_name;
+            if (!productSales[key]) {
+                productSales[key] = {
+                    product_id: item.product_id,
+                    product_name: item.product_name,
+                    total_sold: 0,
+                    total_revenue: 0
+                };
+            }
+            productSales[key].total_sold += item.quantity;
+            productSales[key].total_revenue += parseFloat(item.subtotal || 0);
         });
 
+        const topProducts = Object.values(productSales)
+            .sort((a, b) => b.total_sold - a.total_sold)
+            .slice(0, 5);
+
         // 7. Recent Orders
-        const recentOrders = await Order.findAll({
-            limit: 5,
-            order: [['created_at', 'DESC']],
-            attributes: ['id', 'order_number', 'customer_first_name', 'customer_last_name', 'total_amount', 'order_status', 'created_at']
-        });
+        const { data: recent5Orders } = await supabase
+            .from('orders')
+            .select('id, order_number, customer_first_name, customer_last_name, total_amount, order_status, created_at')
+            .order('created_at', { ascending: false })
+            .limit(5);
 
         res.json({
             success: true,
@@ -93,14 +117,14 @@ const getDashboardStats = async (req, res) => {
                 revenue: totalRevenue,
                 orders: orderStats,
                 products: {
-                    total: totalProducts,
-                    active: activeProducts,
-                    outOfStock: outOfStockProducts
+                    total: totalProducts || 0,
+                    active: activeProducts || 0,
+                    outOfStock: outOfStockProducts || 0
                 },
-                customers: totalCustomers,
-                salesChart: salesData,
+                customers: totalCustomers || 0,
+                salesChart,
                 topProducts,
-                recentOrders
+                recentOrders: recent5Orders || []
             }
         });
 

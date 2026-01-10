@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { Customer } = require('../models').models;
+const { supabase } = require('../utils/supabase');
 
 const authenticateCustomer = async (req, res, next) => {
     try {
@@ -19,9 +19,13 @@ const authenticateCustomer = async (req, res, next) => {
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
 
-        const customer = await Customer.findByPk(decoded.id);
+        const { data: customer, error } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('id', decoded.id)
+            .single();
 
-        if (!customer || !customer.is_active) {
+        if (error || !customer || !customer.is_active) {
             return res.status(401).json({
                 success: false,
                 error: {

@@ -1,9 +1,12 @@
-const { TelegramConfig } = require('../models').models;
+const { supabase } = require('../utils/supabase');
 
 // Get current config from database
 const getConfig = async () => {
     try {
-        const config = await TelegramConfig.findOne();
+        const { data: config } = await supabase
+            .from('telegram_config')
+            .select('*')
+            .single();
         return config;
     } catch (error) {
         console.error('Error fetching Telegram config:', error);

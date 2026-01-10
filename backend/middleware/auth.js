@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { AdminUser } = require('../models').models;
+const { supabase } = require('../utils/supabase');
 
 const authenticate = async (req, res, next) => {
     try {
@@ -19,9 +19,13 @@ const authenticate = async (req, res, next) => {
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
 
-        const user = await AdminUser.findByPk(decoded.id);
+        const { data: user, error } = await supabase
+            .from('admin_users')
+            .select('*')
+            .eq('id', decoded.id)
+            .single();
 
-        if (!user || !user.is_active) {
+        if (error || !user || !user.is_active) {
             return res.status(401).json({
                 success: false,
                 error: {

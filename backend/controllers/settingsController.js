@@ -1,11 +1,15 @@
-const { ShippingConfig, SocialMediaLink } = require('../models').models;
+const { supabase } = require('../utils/supabase');
 
 const getShippingStates = async (req, res) => {
     try {
-        const states = await ShippingConfig.findAll({
-            where: { is_active: true },
-            order: [['state_name', 'ASC']]
-        });
+        const { data: states, error } = await supabase
+            .from('shipping_config')
+            .select('*')
+            .eq('is_active', true)
+            .order('state_name', { ascending: true });
+
+        if (error) throw error;
+
         res.json({
             success: true,
             data: states
@@ -24,10 +28,14 @@ const getShippingStates = async (req, res) => {
 
 const getSocialMediaLinks = async (req, res) => {
     try {
-        const links = await SocialMediaLink.findAll({
-            where: { is_active: true },
-            order: [['display_order', 'ASC']]
-        });
+        const { data: links, error } = await supabase
+            .from('social_media_links')
+            .select('*')
+            .eq('is_active', true)
+            .order('display_order', { ascending: true });
+
+        if (error) throw error;
+
         res.json({
             success: true,
             data: links

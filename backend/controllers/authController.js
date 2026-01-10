@@ -1,4 +1,4 @@
-const { AdminUser } = require('../models').models;
+const { supabase } = require('../utils/supabase');
 const { generateToken, comparePassword, hashPassword } = require('../utils/auth');
 const emailService = require('../services/emailService');
 
@@ -21,9 +21,13 @@ const login = async (req, res) => {
             });
         }
 
-        const user = await AdminUser.findOne({ where: { email } });
+        const { data: user, error } = await supabase
+            .from('admin_users')
+            .select('*')
+            .eq('email', email)
+            .single();
 
-        if (!user || !user.is_active) {
+        if (error || !user || !user.is_active) {
             return res.status(401).json({
                 success: false,
                 error: {
@@ -49,12 +53,15 @@ const login = async (req, res) => {
         if (user.two_factor_enabled) {
             // Generate and save 2FA code
             const code = generate2FACode();
-            const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+            const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
 
-            await user.update({
-                two_factor_temp_code: code,
-                two_factor_temp_expires: expiresAt
-            });
+            await supabase
+                .from('admin_users')
+                .update({
+                    two_factor_temp_code: code,
+                    two_factor_temp_expires: expiresAt
+                })
+                .eq('id', user.id);
 
             // Send 2FA code via email
             try {
@@ -74,7 +81,10 @@ const login = async (req, res) => {
         }
 
         // Update last login
-        await user.update({ last_login: new Date() });
+        await supabase
+            .from('admin_users')
+            .update({ last_login: new Date().toISOString() })
+            .eq('id', user.id);
 
         const token = generateToken(user);
 
@@ -116,9 +126,13 @@ const verify2FA = async (req, res) => {
             });
         }
 
-        const user = await AdminUser.findOne({ where: { email } });
+        const { data: user, error } = await supabase
+            .from('admin_users')
+            .select('*')
+            .eq('email', email)
+            .single();
 
-        if (!user) {
+        if (error || !user) {
             return res.status(401).json({
                 success: false,
                 error: {
@@ -150,11 +164,14 @@ const verify2FA = async (req, res) => {
         }
 
         // Clear the temp code and update last login
-        await user.update({
-            two_factor_temp_code: null,
-            two_factor_temp_expires: null,
-            last_login: new Date()
-        });
+        await supabase
+            .from('admin_users')
+            .update({
+                two_factor_temp_code: null,
+                two_factor_temp_expires: null,
+                last_login: new Date().toISOString()
+            })
+            .eq('id', user.id);
 
         const token = generateToken(user);
 
@@ -227,7 +244,14 @@ const changePassword = async (req, res) => {
             });
         }
 
-        const user = await AdminUser.findByPk(req.user.id);
+        const { data: user, error } = await supabase
+            .from('admin_users')
+            .select('*')
+            .eq('id', req.user.id)
+            .single();
+
+        if (error) throw error;
+
         const isMatch = await comparePassword(current_password, user.password_hash);
 
         if (!isMatch) {
@@ -241,7 +265,11 @@ const changePassword = async (req, res) => {
         }
 
         const hashedPassword = await hashPassword(new_password);
-        await user.update({ password_hash: hashedPassword });
+
+        await supabase
+            .from('admin_users')
+            .update({ password_hash: hashedPassword })
+            .eq('id', req.user.id);
 
         res.json({
             success: true,
@@ -274,7 +302,14 @@ const changeEmail = async (req, res) => {
         }
 
         // Verify password
-        const user = await AdminUser.findByPk(req.user.id);
+        const { data: user, error } = await supabase
+            .from('admin_users')
+            .select('*')
+            .eq('id', req.user.id)
+            .single();
+
+        if (error) throw error;
+
         const isMatch = await comparePassword(password, user.password_hash);
 
         if (!isMatch) {
@@ -288,7 +323,12 @@ const changeEmail = async (req, res) => {
         }
 
         // Check if email is already in use
-        const existingUser = await AdminUser.findOne({ where: { email: new_email } });
+        const { data: existingUser } = await supabase
+            .from('admin_users')
+            .select('id')
+            .eq('email', new_email)
+            .single();
+
         if (existingUser && existingUser.id !== user.id) {
             return res.status(400).json({
                 success: false,
@@ -299,7 +339,10 @@ const changeEmail = async (req, res) => {
             });
         }
 
-        await user.update({ email: new_email });
+        await supabase
+            .from('admin_users')
+            .update({ email: new_email })
+            .eq('id', req.user.id);
 
         res.json({
             success: true,
@@ -320,7 +363,13 @@ const changeEmail = async (req, res) => {
 
 const enable2FA = async (req, res) => {
     try {
-        const user = await AdminUser.findByPk(req.user.id);
+        const { data: user, error } = await supabase
+            .from('admin_users')
+            .select('two_factor_enabled')
+            .eq('id', req.user.id)
+            .single();
+
+        if (error) throw error;
 
         if (user.two_factor_enabled) {
             return res.status(400).json({
@@ -332,7 +381,10 @@ const enable2FA = async (req, res) => {
             });
         }
 
-        await user.update({ two_factor_enabled: true });
+        await supabase
+            .from('admin_users')
+            .update({ two_factor_enabled: true })
+            .eq('id', req.user.id);
 
         res.json({
             success: true,
@@ -364,7 +416,14 @@ const disable2FA = async (req, res) => {
             });
         }
 
-        const user = await AdminUser.findByPk(req.user.id);
+        const { data: user, error } = await supabase
+            .from('admin_users')
+            .select('*')
+            .eq('id', req.user.id)
+            .single();
+
+        if (error) throw error;
+
         const isMatch = await comparePassword(password, user.password_hash);
 
         if (!isMatch) {
@@ -377,11 +436,14 @@ const disable2FA = async (req, res) => {
             });
         }
 
-        await user.update({
-            two_factor_enabled: false,
-            two_factor_temp_code: null,
-            two_factor_temp_expires: null
-        });
+        await supabase
+            .from('admin_users')
+            .update({
+                two_factor_enabled: false,
+                two_factor_temp_code: null,
+                two_factor_temp_expires: null
+            })
+            .eq('id', req.user.id);
 
         res.json({
             success: true,
@@ -409,4 +471,3 @@ module.exports = {
     enable2FA,
     disable2FA
 };
-

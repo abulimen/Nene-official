@@ -1,20 +1,29 @@
-const { ContactInfo, ContactMessage, TelegramConfig } = require('../models').models;
+const { supabase } = require('../utils/supabase');
 const telegramService = require('../services/telegramService');
 
 // Public: Get contact info
 const getContactInfo = async (req, res) => {
     try {
-        let info = await ContactInfo.findOne();
-        if (!info) {
-            // Return default if none exists
-            info = {
-                phone: '+234 800 123 4567',
-                email: 'hello@nene.ng',
-                address: '123 Admiralty Way, Lekki Phase 1, Lagos, Nigeria',
-                business_hours: 'Mon-Fri 9am to 5pm',
-                whatsapp: null
-            };
+        const { data: info, error } = await supabase
+            .from('contact_info')
+            .select('*')
+            .single();
+
+        if (error && error.code === 'PGRST116') {
+            // No row found, return default
+            return res.json({
+                success: true,
+                data: {
+                    phone: '+234 800 123 4567',
+                    email: 'hello@nene.ng',
+                    address: '123 Admiralty Way, Lekki Phase 1, Lagos, Nigeria',
+                    business_hours: 'Mon-Fri 9am to 5pm',
+                    whatsapp: null
+                }
+            });
         }
+        if (error) throw error;
+
         res.json({ success: true, data: info });
     } catch (error) {
         console.error('Error fetching contact info:', error);
@@ -25,20 +34,35 @@ const getContactInfo = async (req, res) => {
 // Admin: Update contact info
 const updateContactInfo = async (req, res) => {
     try {
-        const { phone, email, address, business_hours, whatsapp, city } = req.body;
+        const { phone, email, address, business_hours, whatsapp, city, hero_title, hero_subtitle, footer_tagline } = req.body;
 
-        console.log('Updating contact info with:', { phone, email, address, business_hours, whatsapp, city });
+        // Check if contact info exists
+        const { data: existing, error: fetchError } = await supabase
+            .from('contact_info')
+            .select('id')
+            .limit(1);
 
-        let info = await ContactInfo.findOne();
-        if (!info) {
-            info = await ContactInfo.create({ phone, email, address, business_hours, whatsapp, city });
+        let info;
+        if (!existing || existing.length === 0) {
+            // Create new
+            const { data, error } = await supabase
+                .from('contact_info')
+                .insert({ phone, email, address, business_hours, whatsapp, city, hero_title, hero_subtitle, footer_tagline })
+                .select()
+                .single();
+            if (error) throw error;
+            info = data;
         } else {
-            await info.update({ phone, email, address, business_hours, whatsapp, city });
-            // Reload to get updated values
-            await info.reload();
+            // Update existing
+            const { data, error } = await supabase
+                .from('contact_info')
+                .update({ phone, email, address, business_hours, whatsapp, city, hero_title, hero_subtitle, footer_tagline })
+                .eq('id', existing[0].id)
+                .select()
+                .single();
+            if (error) throw error;
+            info = data;
         }
-
-        console.log('Updated info:', info.toJSON());
 
         res.json({ success: true, data: info });
     } catch (error) {
@@ -59,13 +83,19 @@ const submitMessage = async (req, res) => {
             });
         }
 
-        const contactMessage = await ContactMessage.create({
-            name,
-            email,
-            phone: phone || null,
-            subject,
-            message
-        });
+        const { data: contactMessage, error } = await supabase
+            .from('contact_messages')
+            .insert({
+                name,
+                email,
+                phone: phone || null,
+                subject,
+                message
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
 
         // Send Telegram notification if enabled
         try {
@@ -76,8 +106,11 @@ const submitMessage = async (req, res) => {
 
         // Send email notification to admin
         try {
-            // Get admin email from contact info or use default
-            const contactInfo = await ContactInfo.findOne();
+            const { data: contactInfo } = await supabase
+                .from('contact_info')
+                .select('email')
+                .single();
+
             const adminEmail = contactInfo?.email || process.env.ADMIN_EMAIL;
 
             if (adminEmail) {
@@ -105,17 +138,19 @@ const getMessages = async (req, res) => {
         const { page = 1, limit = 20, unread_only = false } = req.query;
         const offset = (page - 1) * limit;
 
-        const where = {};
+        let query = supabase
+            .from('contact_messages')
+            .select('*', { count: 'exact' });
+
         if (unread_only === 'true') {
-            where.is_read = false;
+            query = query.eq('is_read', false);
         }
 
-        const { count, rows } = await ContactMessage.findAndCountAll({
-            where,
-            order: [['created_at', 'DESC']],
-            limit: parseInt(limit),
-            offset: parseInt(offset)
-        });
+        const { data: rows, count, error } = await query
+            .order('created_at', { ascending: false })
+            .range(offset, offset + parseInt(limit) - 1);
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -136,10 +171,17 @@ const getMessages = async (req, res) => {
 // Admin: Get single message
 const getMessage = async (req, res) => {
     try {
-        const message = await ContactMessage.findByPk(req.params.id);
-        if (!message) {
+        const { data: message, error } = await supabase
+            .from('contact_messages')
+            .select('*')
+            .eq('id', req.params.id)
+            .single();
+
+        if (error && error.code === 'PGRST116') {
             return res.status(404).json({ success: false, error: { message: 'Message not found' } });
         }
+        if (error) throw error;
+
         res.json({ success: true, data: message });
     } catch (error) {
         console.error('Error fetching message:', error);
@@ -150,12 +192,18 @@ const getMessage = async (req, res) => {
 // Admin: Mark message as read
 const markAsRead = async (req, res) => {
     try {
-        const message = await ContactMessage.findByPk(req.params.id);
-        if (!message) {
+        const { data: message, error } = await supabase
+            .from('contact_messages')
+            .update({ is_read: true })
+            .eq('id', req.params.id)
+            .select()
+            .single();
+
+        if (error && error.code === 'PGRST116') {
             return res.status(404).json({ success: false, error: { message: 'Message not found' } });
         }
+        if (error) throw error;
 
-        await message.update({ is_read: true });
         res.json({ success: true, data: message });
     } catch (error) {
         console.error('Error marking message as read:', error);
@@ -166,12 +214,24 @@ const markAsRead = async (req, res) => {
 // Admin: Delete message
 const deleteMessage = async (req, res) => {
     try {
-        const message = await ContactMessage.findByPk(req.params.id);
-        if (!message) {
+        // Check if exists
+        const { data: existing, error: fetchError } = await supabase
+            .from('contact_messages')
+            .select('id')
+            .eq('id', req.params.id)
+            .single();
+
+        if (fetchError || !existing) {
             return res.status(404).json({ success: false, error: { message: 'Message not found' } });
         }
 
-        await message.destroy();
+        const { error } = await supabase
+            .from('contact_messages')
+            .delete()
+            .eq('id', req.params.id);
+
+        if (error) throw error;
+
         res.json({ success: true, message: 'Message deleted' });
     } catch (error) {
         console.error('Error deleting message:', error);
@@ -182,7 +242,13 @@ const deleteMessage = async (req, res) => {
 // Admin: Get unread count
 const getUnreadCount = async (req, res) => {
     try {
-        const count = await ContactMessage.count({ where: { is_read: false } });
+        const { count, error } = await supabase
+            .from('contact_messages')
+            .select('*', { count: 'exact', head: true })
+            .eq('is_read', false);
+
+        if (error) throw error;
+
         res.json({ success: true, data: { count } });
     } catch (error) {
         console.error('Error getting unread count:', error);

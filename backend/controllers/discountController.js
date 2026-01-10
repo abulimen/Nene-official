@@ -1,5 +1,4 @@
-const { DiscountCode } = require('../models').models;
-const { Op } = require('sequelize');
+const { supabase } = require('../utils/supabase');
 
 const validateDiscount = async (req, res) => {
     try {
@@ -15,18 +14,26 @@ const validateDiscount = async (req, res) => {
             });
         }
 
-        const discount = await DiscountCode.findOne({
-            where: {
-                code,
-                is_active: true,
-                [Op.or]: [
-                    { expires_at: null },
-                    { expires_at: { [Op.gt]: new Date() } }
-                ]
-            }
-        });
+        // Find active, non-expired discount code
+        const { data: discount, error } = await supabase
+            .from('discount_codes')
+            .select('*')
+            .eq('code', code)
+            .eq('is_active', true)
+            .single();
 
-        if (!discount) {
+        if (error || !discount) {
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: 'INVALID_CODE',
+                    message: 'Invalid or expired discount code'
+                }
+            });
+        }
+
+        // Check if expired
+        if (discount.expires_at && new Date(discount.expires_at) < new Date()) {
             return res.status(404).json({
                 success: false,
                 error: {

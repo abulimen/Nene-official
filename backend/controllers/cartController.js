@@ -1,40 +1,49 @@
-const { Cart, CartItem, Product, ProductVariation } = require('../models').models;
-const { Op } = require('sequelize');
+const { supabase } = require('../utils/supabase');
+
+// Helper function to get cart with items
+const getCartWithItems = async (customer_id) => {
+    // Find or create cart
+    let { data: cart, error } = await supabase
+        .from('carts')
+        .select('id')
+        .eq('customer_id', customer_id)
+        .single();
+
+    if (!cart) {
+        const { data: newCart, error: createError } = await supabase
+            .from('carts')
+            .insert({ customer_id })
+            .select()
+            .single();
+        if (createError) throw createError;
+        cart = newCart;
+    }
+
+    // Get cart items with product and variation info
+    const { data: items, error: itemsError } = await supabase
+        .from('cart_items')
+        .select(`
+            id,
+            product_id,
+            variation_id,
+            quantity,
+            product:products(id, name, price, image_url, size, is_active, is_available),
+            variation:product_variations(id, name, price, is_available)
+        `)
+        .eq('cart_id', cart.id);
+
+    if (itemsError) throw itemsError;
+
+    return { cart, items: items || [] };
+};
 
 const getCart = async (req, res) => {
     try {
         const customer_id = req.user.id;
-
-        let cart = await Cart.findOne({
-            where: { customer_id },
-            include: [
-                {
-                    model: CartItem,
-                    as: 'items',
-                    include: [
-                        {
-                            model: Product,
-                            as: 'product',
-                            attributes: ['id', 'name', 'price', 'image_url', 'size', 'is_active', 'is_available']
-                        },
-                        {
-                            model: ProductVariation,
-                            as: 'variation',
-                            attributes: ['id', 'name', 'price', 'is_available']
-                        }
-                    ]
-                }
-            ]
-        });
-
-        if (!cart) {
-            cart = await Cart.create({ customer_id });
-            cart.items = [];
-        }
+        const { cart, items } = await getCartWithItems(customer_id);
 
         // Format response to match frontend expectation
-        const formattedItems = cart.items ? cart.items.map(item => {
-            // Use variation price/name if variation exists, otherwise use product
+        const formattedItems = items.map(item => {
             const hasVariation = item.variation && item.variation_id;
             return {
                 id: item.product.id,
@@ -46,7 +55,6 @@ const getCart = async (req, res) => {
                 is_available: hasVariation ? item.variation.is_available : item.product.is_available,
                 quantity: item.quantity,
                 cart_item_id: item.id,
-                // Include variation info for frontend
                 variation_id: item.variation_id,
                 selectedVariation: hasVariation ? {
                     id: item.variation.id,
@@ -55,10 +63,9 @@ const getCart = async (req, res) => {
                     is_available: item.variation.is_available
                 } : null,
                 displaySize: hasVariation ? item.variation.name : item.product.size,
-                // Unique cart key for frontend
                 cartKey: hasVariation ? `${item.product.id}_${item.variation_id}` : `${item.product.id}`
             };
-        }) : [];
+        });
 
         res.json({
             success: true,
@@ -91,40 +98,54 @@ const addToCart = async (req, res) => {
             });
         }
 
-        let cart = await Cart.findOne({ where: { customer_id } });
+        // Get or create cart
+        let { data: cart } = await supabase
+            .from('carts')
+            .select('id')
+            .eq('customer_id', customer_id)
+            .single();
 
         if (!cart) {
-            cart = await Cart.create({ customer_id });
+            const { data: newCart } = await supabase
+                .from('carts')
+                .insert({ customer_id })
+                .select()
+                .single();
+            cart = newCart;
         }
 
-        // Build where clause - include variation_id in lookup
-        const whereClause = {
-            cart_id: cart.id,
-            product_id
-        };
+        // Check for existing item
+        let query = supabase
+            .from('cart_items')
+            .select('*')
+            .eq('cart_id', cart.id)
+            .eq('product_id', product_id);
 
-        // Handle variation_id (null means base product)
         if (variation_id) {
-            whereClause.variation_id = variation_id;
+            query = query.eq('variation_id', variation_id);
         } else {
-            whereClause.variation_id = { [Op.is]: null };
+            query = query.is('variation_id', null);
         }
 
-        const existingItem = await CartItem.findOne({ where: whereClause });
+        const { data: existingItems } = await query;
+        const existingItem = existingItems?.[0];
 
         if (existingItem) {
-            existingItem.quantity += parseInt(quantity);
-            await existingItem.save();
+            await supabase
+                .from('cart_items')
+                .update({ quantity: existingItem.quantity + parseInt(quantity) })
+                .eq('id', existingItem.id);
         } else {
-            await CartItem.create({
-                cart_id: cart.id,
-                product_id,
-                variation_id: variation_id || null,
-                quantity
-            });
+            await supabase
+                .from('cart_items')
+                .insert({
+                    cart_id: cart.id,
+                    product_id,
+                    variation_id: variation_id || null,
+                    quantity
+                });
         }
 
-        // Return updated cart
         return getCart(req, res);
     } catch (error) {
         console.error('Add to cart error:', error);
@@ -143,7 +164,12 @@ const updateCartItem = async (req, res) => {
         const customer_id = req.user.id;
         const { product_id, quantity, variation_id } = req.body;
 
-        const cart = await Cart.findOne({ where: { customer_id } });
+        const { data: cart } = await supabase
+            .from('carts')
+            .select('id')
+            .eq('customer_id', customer_id)
+            .single();
+
         if (!cart) {
             return res.status(404).json({
                 success: false,
@@ -154,19 +180,21 @@ const updateCartItem = async (req, res) => {
             });
         }
 
-        // Build where clause - include variation_id in lookup
-        const whereClause = {
-            cart_id: cart.id,
-            product_id
-        };
+        // Find item
+        let query = supabase
+            .from('cart_items')
+            .select('*')
+            .eq('cart_id', cart.id)
+            .eq('product_id', product_id);
 
         if (variation_id) {
-            whereClause.variation_id = variation_id;
+            query = query.eq('variation_id', variation_id);
         } else {
-            whereClause.variation_id = { [Op.is]: null };
+            query = query.is('variation_id', null);
         }
 
-        const item = await CartItem.findOne({ where: whereClause });
+        const { data: items } = await query;
+        const item = items?.[0];
 
         if (!item) {
             return res.status(404).json({
@@ -179,10 +207,15 @@ const updateCartItem = async (req, res) => {
         }
 
         if (quantity > 0) {
-            item.quantity = quantity;
-            await item.save();
+            await supabase
+                .from('cart_items')
+                .update({ quantity })
+                .eq('id', item.id);
         } else {
-            await item.destroy();
+            await supabase
+                .from('cart_items')
+                .delete()
+                .eq('id', item.id);
         }
 
         return getCart(req, res);
@@ -213,7 +246,12 @@ const removeFromCart = async (req, res) => {
             variationId = parts[1];
         }
 
-        const cart = await Cart.findOne({ where: { customer_id } });
+        const { data: cart } = await supabase
+            .from('carts')
+            .select('id')
+            .eq('customer_id', customer_id)
+            .single();
+
         if (!cart) {
             return res.status(404).json({
                 success: false,
@@ -224,19 +262,20 @@ const removeFromCart = async (req, res) => {
             });
         }
 
-        // Build where clause
-        const whereClause = {
-            cart_id: cart.id,
-            product_id: actualProductId
-        };
+        // Delete item
+        let deleteQuery = supabase
+            .from('cart_items')
+            .delete()
+            .eq('cart_id', cart.id)
+            .eq('product_id', actualProductId);
 
         if (variationId) {
-            whereClause.variation_id = variationId;
+            deleteQuery = deleteQuery.eq('variation_id', variationId);
         } else {
-            whereClause.variation_id = { [Op.is]: null };
+            deleteQuery = deleteQuery.is('variation_id', null);
         }
 
-        await CartItem.destroy({ where: whereClause });
+        await deleteQuery;
 
         return getCart(req, res);
     } catch (error) {
@@ -254,12 +293,17 @@ const removeFromCart = async (req, res) => {
 const clearCart = async (req, res) => {
     try {
         const customer_id = req.user.id;
-        const cart = await Cart.findOne({ where: { customer_id } });
+        const { data: cart } = await supabase
+            .from('carts')
+            .select('id')
+            .eq('customer_id', customer_id)
+            .single();
 
         if (cart) {
-            await CartItem.destroy({
-                where: { cart_id: cart.id }
-            });
+            await supabase
+                .from('cart_items')
+                .delete()
+                .eq('cart_id', cart.id);
         }
 
         res.json({
@@ -281,7 +325,7 @@ const clearCart = async (req, res) => {
 const syncCart = async (req, res) => {
     try {
         const customer_id = req.user.id;
-        const { items } = req.body; // Array of cart items with potential variations
+        const { items } = req.body;
 
         if (!Array.isArray(items)) {
             return res.status(400).json({
@@ -293,40 +337,56 @@ const syncCart = async (req, res) => {
             });
         }
 
-        let cart = await Cart.findOne({ where: { customer_id } });
+        // Get or create cart
+        let { data: cart } = await supabase
+            .from('carts')
+            .select('id')
+            .eq('customer_id', customer_id)
+            .single();
+
         if (!cart) {
-            cart = await Cart.create({ customer_id });
+            const { data: newCart } = await supabase
+                .from('carts')
+                .insert({ customer_id })
+                .select()
+                .single();
+            cart = newCart;
         }
 
         for (const item of items) {
             const productId = item.id;
             const variationId = item.selectedVariation?.id || item.variation_id || null;
 
-            // Build where clause
-            const whereClause = {
-                cart_id: cart.id,
-                product_id: productId
-            };
+            // Find existing item
+            let query = supabase
+                .from('cart_items')
+                .select('*')
+                .eq('cart_id', cart.id)
+                .eq('product_id', productId);
 
             if (variationId) {
-                whereClause.variation_id = variationId;
+                query = query.eq('variation_id', variationId);
             } else {
-                whereClause.variation_id = { [Op.is]: null };
+                query = query.is('variation_id', null);
             }
 
-            const existingItem = await CartItem.findOne({ where: whereClause });
+            const { data: existingItems } = await query;
+            const existingItem = existingItems?.[0];
 
             if (existingItem) {
-                // Add quantities for sync
-                existingItem.quantity += parseInt(item.quantity);
-                await existingItem.save();
+                await supabase
+                    .from('cart_items')
+                    .update({ quantity: existingItem.quantity + parseInt(item.quantity) })
+                    .eq('id', existingItem.id);
             } else {
-                await CartItem.create({
-                    cart_id: cart.id,
-                    product_id: productId,
-                    variation_id: variationId,
-                    quantity: item.quantity
-                });
+                await supabase
+                    .from('cart_items')
+                    .insert({
+                        cart_id: cart.id,
+                        product_id: productId,
+                        variation_id: variationId,
+                        quantity: item.quantity
+                    });
             }
         }
 
@@ -351,4 +411,3 @@ module.exports = {
     clearCart,
     syncCart
 };
-

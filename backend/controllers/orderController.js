@@ -1,15 +1,11 @@
-const { Order, OrderItem, Product, DiscountCode, ShippingConfig, OrderStatusHistory, Cart, CartItem } = require('../models').models;
+const { supabase } = require('../utils/supabase');
 const paystackService = require('../services/paystackService');
 const emailService = require('../services/emailService');
-const { sequelize } = require('../utils/db');
-const { v4: uuidv4 } = require('uuid');
-const { Op } = require('sequelize');
 
 // Helper function to compare cart items with order items
 const cartMatchesOrder = (cartItems, orderItems) => {
     if (cartItems.length !== orderItems.length) return false;
 
-    // Sort both arrays by product_id for comparison
     const sortedCart = [...cartItems].sort((a, b) => a.product_id - b.product_id);
     const sortedOrder = [...orderItems].sort((a, b) => a.product_id - b.product_id);
 
@@ -23,8 +19,6 @@ const cartMatchesOrder = (cartItems, orderItems) => {
 };
 
 const createOrder = async (req, res) => {
-    const t = await sequelize.transaction();
-
     try {
         const {
             customer_first_name,
@@ -39,26 +33,25 @@ const createOrder = async (req, res) => {
             notes
         } = req.body;
 
-        // 0. Check for existing pending unpaid orders for this customer
-        const existingPendingOrder = await Order.findOne({
-            where: {
-                customer_email,
-                payment_status: 'pending',
-                order_status: 'pending',
-                // Only consider orders from the last 24 hours
-                createdAt: {
-                    [Op.gte]: new Date(Date.now() - 24 * 60 * 60 * 1000)
-                }
-            },
-            include: [{
-                model: OrderItem,
-                as: 'items'
-            }],
-            order: [['createdAt', 'DESC']]
-        });
+        // Check for existing pending unpaid orders (last 24 hours)
+        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+        const { data: existingOrders } = await supabase
+            .from('orders')
+            .select(`
+                *,
+                items:order_items(*)
+            `)
+            .eq('customer_email', customer_email)
+            .eq('payment_status', 'pending')
+            .eq('order_status', 'pending')
+            .gte('created_at', twentyFourHoursAgo)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+        const existingPendingOrder = existingOrders?.[0];
 
         if (existingPendingOrder) {
-            // Check if cart items match the existing order
             const existingOrderItems = existingPendingOrder.items.map(item => ({
                 product_id: item.product_id,
                 quantity: item.quantity
@@ -70,8 +63,8 @@ const createOrder = async (req, res) => {
             }));
 
             if (cartMatchesOrder(currentCartItems, existingOrderItems)) {
-                // Cart matches! Reuse the existing order - generate new payment link
-                console.log(`Reusing existing pending order ${existingPendingOrder.order_number} for ${customer_email}`);
+                // Reuse existing order
+                console.log(`Reusing existing pending order ${existingPendingOrder.order_number}`);
 
                 const paymentData = await paystackService.initializeTransaction(
                     customer_email,
@@ -83,12 +76,10 @@ const createOrder = async (req, res) => {
                     }
                 );
 
-                // Update the payment reference
-                await existingPendingOrder.update({
-                    payment_reference: paymentData.reference
-                }, { transaction: t });
-
-                await t.commit();
+                await supabase
+                    .from('orders')
+                    .update({ payment_reference: paymentData.reference })
+                    .eq('id', existingPendingOrder.id);
 
                 return res.status(200).json({
                     success: true,
@@ -101,35 +92,27 @@ const createOrder = async (req, res) => {
                     }
                 });
             } else {
-                // Cart has changed - DELETE the old pending order completely
-                console.log(`Deleting stale pending order ${existingPendingOrder.order_number} - cart items changed`);
+                // Delete stale pending order
+                console.log(`Deleting stale pending order ${existingPendingOrder.order_number}`);
 
-                // Delete order items first (foreign key constraint)
-                await OrderItem.destroy({
-                    where: { order_id: existingPendingOrder.id },
-                    transaction: t
-                });
-
-                // Delete status history
-                await OrderStatusHistory.destroy({
-                    where: { order_id: existingPendingOrder.id },
-                    transaction: t
-                });
-
-                // Delete the order itself
-                await existingPendingOrder.destroy({ transaction: t });
+                await supabase.from('order_items').delete().eq('order_id', existingPendingOrder.id);
+                await supabase.from('order_status_history').delete().eq('order_id', existingPendingOrder.id);
+                await supabase.from('orders').delete().eq('id', existingPendingOrder.id);
             }
         }
 
-        // 1. Validate Items and Calculate Subtotal
+        // Validate Items and Calculate Subtotal
         let subtotal = 0;
         const orderItemsData = [];
 
         for (const item of items) {
-            const product = await Product.findByPk(item.product_id);
+            const { data: product, error } = await supabase
+                .from('products')
+                .select('*')
+                .eq('id', item.product_id)
+                .single();
 
-            if (!product) {
-                await t.rollback();
+            if (error || !product) {
                 return res.status(400).json({
                     success: false,
                     error: {
@@ -140,18 +123,16 @@ const createOrder = async (req, res) => {
             }
 
             if (!product.is_active) {
-                await t.rollback();
                 return res.status(400).json({
                     success: false,
                     error: {
                         code: 'PRODUCT_DELETED',
-                        message: `Product "${product.name}" is no longer available (deleted)`
+                        message: `Product "${product.name}" is no longer available`
                     }
                 });
             }
 
             if (!product.is_available) {
-                await t.rollback();
                 return res.status(400).json({
                     success: false,
                     error: {
@@ -161,23 +142,24 @@ const createOrder = async (req, res) => {
                 });
             }
 
-            // Use variation price if provided, otherwise use product price
             let itemPrice = parseFloat(product.price);
             let variationId = null;
             let variationName = null;
 
             if (item.variation_id) {
-                // Import ProductVariation if not already
-                const ProductVariation = require('../models/ProductVariation');
-                const variation = await ProductVariation.findByPk(item.variation_id);
+                const { data: variation } = await supabase
+                    .from('product_variations')
+                    .select('*')
+                    .eq('id', item.variation_id)
+                    .single();
+
                 if (variation && variation.product_id === product.id) {
                     if (!variation.is_available) {
-                        await t.rollback();
                         return res.status(400).json({
                             success: false,
                             error: {
                                 code: 'VARIATION_OUT_OF_STOCK',
-                                message: `Size "${variation.name}" for "${product.name}" is currently out of stock`
+                                message: `Size "${variation.name}" for "${product.name}" is out of stock`
                             }
                         });
                     }
@@ -186,9 +168,7 @@ const createOrder = async (req, res) => {
                     variationName = variation.name;
                 }
             } else if (item.variation_name) {
-                // Frontend sent variation name but no ID (for local cart items)
                 variationName = item.variation_name;
-                // Use the price from the cart if provided
                 if (item.price) {
                     itemPrice = parseFloat(item.price);
                 }
@@ -208,21 +188,27 @@ const createOrder = async (req, res) => {
             });
         }
 
-        // 2. Calculate Shipping Fee
-        const shippingConfig = await ShippingConfig.findOne({
-            where: { state_name: shipping_state, is_active: true }
-        });
+        // Calculate Shipping Fee
+        const { data: shippingConfig } = await supabase
+            .from('shipping_config')
+            .select('shipping_fee')
+            .eq('state_name', shipping_state)
+            .eq('is_active', true)
+            .single();
 
         const shippingFee = shippingConfig ? parseFloat(shippingConfig.shipping_fee) : 0;
 
-        // 3. Calculate Discount
+        // Calculate Discount
         let discountAmount = 0;
         let discountCodeId = null;
 
         if (discount_code) {
-            const discount = await DiscountCode.findOne({
-                where: { code: discount_code, is_active: true }
-            });
+            const { data: discount } = await supabase
+                .from('discount_codes')
+                .select('*')
+                .eq('code', discount_code)
+                .eq('is_active', true)
+                .single();
 
             if (discount) {
                 if (discount.discount_type === 'percentage') {
@@ -230,15 +216,12 @@ const createOrder = async (req, res) => {
                 } else {
                     discountAmount = parseFloat(discount.discount_value);
                 }
-
                 if (discountAmount > subtotal) discountAmount = subtotal;
                 discountCodeId = discount.id;
             }
         }
 
         const totalAmount = subtotal + shippingFee - discountAmount;
-
-        // 4. Create Order Record
         const orderNumber = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
         const orderData = {
@@ -264,28 +247,35 @@ const createOrder = async (req, res) => {
             orderData.customer_id = req.user.id;
         }
 
-        const order = await Order.create(orderData, { transaction: t });
+        // Create Order
+        const { data: order, error: orderError } = await supabase
+            .from('orders')
+            .insert(orderData)
+            .select()
+            .single();
 
-        // 5. Create Order Items
+        if (orderError) throw orderError;
+
+        // Create Order Items
         for (const itemData of orderItemsData) {
-            await OrderItem.create({
+            await supabase.from('order_items').insert({
                 ...itemData,
                 order_id: order.id
-            }, { transaction: t });
+            });
         }
 
-        // 6. Create Initial Status History
-        await OrderStatusHistory.create({
+        // Create Initial Status History
+        await supabase.from('order_status_history').insert({
             order_id: order.id,
             new_status: 'pending',
             notes: 'Order created'
-        }, { transaction: t });
+        });
 
-        // 7. Initialize Paystack Transaction
+        // Initialize Paystack Transaction
         const paymentData = await paystackService.initializeTransaction(
             customer_email,
             totalAmount,
-            `${process.env.FRONTEND_URL}/order-confirmation?order_id=${order.id}`, // Callback URL
+            `${process.env.FRONTEND_URL}/order-confirmation?order_id=${order.id}`,
             {
                 order_id: order.id,
                 order_number: orderNumber
@@ -293,9 +283,10 @@ const createOrder = async (req, res) => {
         );
 
         // Update order with payment reference
-        await order.update({ payment_reference: paymentData.reference }, { transaction: t });
-
-        await t.commit();
+        await supabase
+            .from('orders')
+            .update({ payment_reference: paymentData.reference })
+            .eq('id', order.id);
 
         res.status(201).json({
             success: true,
@@ -308,7 +299,6 @@ const createOrder = async (req, res) => {
         });
 
     } catch (error) {
-        await t.rollback();
         console.error('Order creation error:', error);
         res.status(500).json({
             success: false,
@@ -324,16 +314,16 @@ const getMyOrders = async (req, res) => {
     try {
         const customer_id = req.user.id;
 
-        const orders = await Order.findAll({
-            where: { customer_id },
-            include: [
-                {
-                    model: OrderItem,
-                    as: 'items'
-                }
-            ],
-            order: [['createdAt', 'DESC']]
-        });
+        const { data: orders, error } = await supabase
+            .from('orders')
+            .select(`
+                *,
+                items:order_items(*)
+            `)
+            .eq('customer_id', customer_id)
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -365,16 +355,22 @@ const verifyPaymentWebhook = async (req, res) => {
             const { reference, metadata } = event.data;
             const orderId = metadata.order_id;
 
-            const order = await Order.findByPk(orderId);
+            const { data: order } = await supabase
+                .from('orders')
+                .select('*')
+                .eq('id', orderId)
+                .single();
 
             if (order && order.payment_status !== 'paid') {
-                await order.update({
-                    payment_status: 'paid',
-                    order_status: 'processing' // Auto-move to processing on payment
-                });
+                await supabase
+                    .from('orders')
+                    .update({
+                        payment_status: 'paid',
+                        order_status: 'processing'
+                    })
+                    .eq('id', orderId);
 
-                // Add history entry
-                await OrderStatusHistory.create({
+                await supabase.from('order_status_history').insert({
                     order_id: order.id,
                     old_status: 'pending',
                     new_status: 'processing',
@@ -383,7 +379,6 @@ const verifyPaymentWebhook = async (req, res) => {
 
                 // Trigger email notification
                 try {
-                    const emailService = require('../services/emailService');
                     await emailService.sendOrderConfirmation(order);
                 } catch (emailError) {
                     console.error('Failed to send email:', emailError);
@@ -403,64 +398,51 @@ const retryPayment = async (req, res) => {
         const orderId = req.params.id;
         const customerId = req.user.id;
 
-        const order = await Order.findByPk(orderId);
+        const { data: order, error } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('id', orderId)
+            .single();
 
-        if (!order) {
+        if (error || !order) {
             return res.status(404).json({
                 success: false,
-                error: {
-                    code: 'ORDER_NOT_FOUND',
-                    message: 'Order not found'
-                }
+                error: { code: 'ORDER_NOT_FOUND', message: 'Order not found' }
             });
         }
 
-        // Verify order belongs to customer
         if (order.customer_id !== customerId) {
             return res.status(403).json({
                 success: false,
-                error: {
-                    code: 'FORBIDDEN',
-                    message: 'You do not have permission to access this order'
-                }
+                error: { code: 'FORBIDDEN', message: 'Access denied' }
             });
         }
 
-        // Check if order is already paid
         if (order.payment_status === 'paid') {
             return res.status(400).json({
                 success: false,
-                error: {
-                    code: 'ALREADY_PAID',
-                    message: 'This order has already been paid'
-                }
+                error: { code: 'ALREADY_PAID', message: 'Order already paid' }
             });
         }
 
-        // Check if order is cancelled
         if (order.order_status === 'cancelled') {
             return res.status(400).json({
                 success: false,
-                error: {
-                    code: 'ORDER_CANCELLED',
-                    message: 'This order has been cancelled'
-                }
+                error: { code: 'ORDER_CANCELLED', message: 'Order is cancelled' }
             });
         }
 
-        // Initialize new Paystack transaction
         const paymentData = await paystackService.initializeTransaction(
             order.customer_email,
             order.total_amount,
             `${process.env.FRONTEND_URL}/order-confirmation?order_id=${order.id}`,
-            {
-                order_id: order.id,
-                order_number: order.order_number
-            }
+            { order_id: order.id, order_number: order.order_number }
         );
 
-        // Update order with new payment reference
-        await order.update({ payment_reference: paymentData.reference });
+        await supabase
+            .from('orders')
+            .update({ payment_reference: paymentData.reference })
+            .eq('id', order.id);
 
         res.json({
             success: true,
@@ -476,257 +458,182 @@ const retryPayment = async (req, res) => {
         console.error('Retry payment error:', error);
         res.status(500).json({
             success: false,
-            error: {
-                code: 'SERVER_ERROR',
-                message: 'Error retrying payment'
-            }
+            error: { code: 'SERVER_ERROR', message: 'Error retrying payment' }
         });
     }
 };
 
 const cancelOrder = async (req, res) => {
-    const t = await sequelize.transaction();
-
     try {
         const orderId = req.params.id;
         const customerId = req.user.id;
 
-        const order = await Order.findByPk(orderId);
+        const { data: order, error } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('id', orderId)
+            .single();
 
-        if (!order) {
-            await t.rollback();
+        if (error || !order) {
             return res.status(404).json({
                 success: false,
-                error: {
-                    code: 'ORDER_NOT_FOUND',
-                    message: 'Order not found'
-                }
+                error: { code: 'ORDER_NOT_FOUND', message: 'Order not found' }
             });
         }
 
-        // Verify order belongs to customer
         if (order.customer_id !== customerId) {
-            await t.rollback();
             return res.status(403).json({
                 success: false,
-                error: {
-                    code: 'FORBIDDEN',
-                    message: 'You do not have permission to access this order'
-                }
+                error: { code: 'FORBIDDEN', message: 'Access denied' }
             });
         }
 
-        // Check if order is already paid
         if (order.payment_status === 'paid') {
-            await t.rollback();
             return res.status(400).json({
                 success: false,
-                error: {
-                    code: 'CANNOT_CANCEL',
-                    message: 'Cannot cancel a paid order. Please contact support.'
-                }
+                error: { code: 'CANNOT_CANCEL', message: 'Cannot cancel paid order' }
             });
         }
 
-        // Check if order is already cancelled
         if (order.order_status === 'cancelled') {
-            await t.rollback();
             return res.status(400).json({
                 success: false,
-                error: {
-                    code: 'ALREADY_CANCELLED',
-                    message: 'This order is already cancelled'
-                }
+                error: { code: 'ALREADY_CANCELLED', message: 'Already cancelled' }
             });
         }
 
-        // Update order status to cancelled
-        await order.update({ order_status: 'cancelled' }, { transaction: t });
+        await supabase
+            .from('orders')
+            .update({ order_status: 'cancelled' })
+            .eq('id', orderId);
 
-        // Create status history record
-        await OrderStatusHistory.create({
+        await supabase.from('order_status_history').insert({
             order_id: order.id,
             old_status: order.order_status,
             new_status: 'cancelled',
-            notes: 'Order cancelled by customer'
-        }, { transaction: t });
-
-        await t.commit();
-
-        res.json({
-            success: true,
-            message: 'Order cancelled successfully'
+            notes: 'Cancelled by customer'
         });
 
+        res.json({ success: true, message: 'Order cancelled successfully' });
+
     } catch (error) {
-        await t.rollback();
         console.error('Cancel order error:', error);
         res.status(500).json({
             success: false,
-            error: {
-                code: 'SERVER_ERROR',
-                message: 'Error cancelling order'
-            }
+            error: { code: 'SERVER_ERROR', message: 'Error cancelling order' }
         });
     }
 };
 
 const verifyPayment = async (req, res) => {
-    const t = await sequelize.transaction();
-
     try {
         const { reference, order_id } = req.body;
         const customerId = req.user.id;
 
         if (!reference || !order_id) {
-            await t.rollback();
             return res.status(400).json({
                 success: false,
-                error: {
-                    code: 'MISSING_PARAMETERS',
-                    message: 'Payment reference and order ID are required'
-                }
+                error: { code: 'MISSING_PARAMETERS', message: 'Reference and order ID required' }
             });
         }
 
-        // Fetch the order
-        const order = await Order.findByPk(order_id, {
-            include: [{
-                model: OrderItem,
-                as: 'items'
-            }]
-        });
+        const { data: order, error } = await supabase
+            .from('orders')
+            .select(`*, items:order_items(*)`)
+            .eq('id', order_id)
+            .single();
 
-        if (!order) {
-            await t.rollback();
+        if (error || !order) {
             return res.status(404).json({
                 success: false,
-                error: {
-                    code: 'ORDER_NOT_FOUND',
-                    message: 'Order not found'
-                }
+                error: { code: 'ORDER_NOT_FOUND', message: 'Order not found' }
             });
         }
 
-        // Verify order belongs to customer
         if (order.customer_id !== customerId) {
-            await t.rollback();
             return res.status(403).json({
                 success: false,
-                error: {
-                    code: 'FORBIDDEN',
-                    message: 'You do not have permission to access this order'
-                }
+                error: { code: 'FORBIDDEN', message: 'Access denied' }
             });
         }
 
-        // If already paid, return the order with full details
+        // If already paid, return order
         if (order.payment_status === 'paid') {
-            await t.commit();
+            const { data: orderWithDetails } = await supabase
+                .from('orders')
+                .select(`
+                    *,
+                    items:order_items(
+                        *,
+                        product:products(image_url)
+                    )
+                `)
+                .eq('id', order_id)
+                .single();
 
-            // Fetch order with product details for the receipt
-            const orderWithDetails = await Order.findByPk(order_id, {
-                include: [{
-                    model: OrderItem,
-                    as: 'items',
-                    include: [{
-                        model: Product,
-                        as: 'product',
-                        attributes: ['image_url'],
-                        include: [{
-                            model: require('../models').models.ProductImage,
-                            as: 'images',
-                            attributes: ['image_url', 'is_primary']
-                        }]
-                    }]
-                }]
-            });
-
-            return res.json({
-                success: true,
-                data: orderWithDetails
-            });
+            return res.json({ success: true, data: orderWithDetails });
         }
 
-        // Verify payment with Paystack
+        // Verify with Paystack
         const paymentVerification = await paystackService.verifyTransaction(reference);
 
         if (!paymentVerification || paymentVerification.status !== 'success') {
-            await t.rollback();
             return res.status(400).json({
                 success: false,
-                error: {
-                    code: 'PAYMENT_FAILED',
-                    message: 'Payment verification failed'
-                }
+                error: { code: 'PAYMENT_FAILED', message: 'Payment verification failed' }
             });
         }
 
         // Update order status
-        await order.update({
-            payment_status: 'paid',
-            order_status: 'processing'
-        }, { transaction: t });
+        await supabase
+            .from('orders')
+            .update({
+                payment_status: 'paid',
+                order_status: 'processing'
+            })
+            .eq('id', order_id);
 
         // Add status history
-        await OrderStatusHistory.create({
+        await supabase.from('order_status_history').insert({
             order_id: order.id,
             old_status: 'pending',
             new_status: 'processing',
             notes: 'Payment verified and confirmed'
-        }, { transaction: t });
+        });
 
-        // Clear customer's cart after successful payment
-        const cart = await Cart.findOne({ where: { customer_id: customerId } });
+        // Clear customer's cart
+        const { data: cart } = await supabase
+            .from('carts')
+            .select('id')
+            .eq('customer_id', customerId)
+            .single();
+
         if (cart) {
-            await CartItem.destroy({
-                where: { cart_id: cart.id }
-            }, { transaction: t });
+            await supabase.from('cart_items').delete().eq('cart_id', cart.id);
         }
 
-        await t.commit();
+        // Fetch updated order with product details
+        const { data: updatedOrder } = await supabase
+            .from('orders')
+            .select(`
+                *,
+                items:order_items(
+                    *,
+                    product:products(image_url)
+                )
+            `)
+            .eq('id', order_id)
+            .single();
 
-        // Fetch updated order with items
-        const updatedOrder = await Order.findByPk(order_id, {
-            include: [{
-                model: OrderItem,
-                as: 'items',
-                include: [{
-                    model: Product,
-                    as: 'product',
-                    attributes: ['image_url'],
-                    include: [{
-                        model: require('../models').models.ProductImage,
-                        as: 'images',
-                        attributes: ['image_url', 'is_primary']
-                    }]
-                }]
-            }]
-        });
+        res.json({ success: true, data: updatedOrder });
 
-        console.log('=== VERIFY PAYMENT - ORDER DATA ===');
-        console.log('Order ID:', order_id);
-        console.log('Has items?', !!updatedOrder.items);
-        console.log('Items count:', updatedOrder.items?.length);
-        if (updatedOrder.items && updatedOrder.items.length > 0) {
-            console.log('First item has product?', !!updatedOrder.items[0].product);
-            console.log('First item data:', JSON.stringify(updatedOrder.items[0], null, 2));
-        }
-        console.log('=== END ORDER DATA ===');
-
-        res.json({
-            success: true,
-            data: updatedOrder
-        });
-
-        // Send confirmation email asynchronously
+        // Send notifications asynchronously
         try {
             await emailService.sendOrderConfirmation(updatedOrder);
         } catch (emailError) {
             console.error('Failed to send confirmation email:', emailError);
         }
 
-        // Send Telegram notification to admin
         try {
             const telegramService = require('../services/telegramService');
             await telegramService.notifyNewPurchase(updatedOrder);
@@ -734,57 +641,11 @@ const verifyPayment = async (req, res) => {
             console.error('Failed to send Telegram notification:', telegramError);
         }
 
-        // Send email notification to admin
-        try {
-            const { ContactInfo } = require('../models').models;
-            const contactInfo = await ContactInfo.findOne();
-            const adminEmail = contactInfo?.email || process.env.ADMIN_EMAIL;
-
-            if (adminEmail) {
-                // Create a simple admin notification email
-                const adminSubject = `🛒 New Order: ${updatedOrder.order_number}`;
-                const adminHtml = `
-                    <h2>New Order Received!</h2>
-                    <p><strong>Order:</strong> ${updatedOrder.order_number}</p>
-                    <p><strong>Customer:</strong> ${updatedOrder.customer_first_name} ${updatedOrder.customer_last_name}</p>
-                    <p><strong>Email:</strong> ${updatedOrder.customer_email}</p>
-                    <p><strong>Phone:</strong> ${updatedOrder.customer_phone}</p>
-                    <p><strong>Total:</strong> ₦${parseFloat(updatedOrder.total_amount).toLocaleString()}</p>
-                    <p><strong>Shipping:</strong> ${updatedOrder.shipping_city}, ${updatedOrder.shipping_state}</p>
-                    <p>Check your admin dashboard to process this order.</p>
-                `;
-
-                const SibApiV3Sdk = require('sib-api-v3-sdk');
-                const defaultClient = SibApiV3Sdk.ApiClient.instance;
-                const apiKey = defaultClient.authentications['api-key'];
-                apiKey.apiKey = process.env.BREVO_API_KEY;
-                const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
-
-                const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-                sendSmtpEmail.to = [{ email: adminEmail, name: 'Admin' }];
-                sendSmtpEmail.sender = {
-                    email: process.env.BREVO_SENDER_EMAIL || 'orders@nene.com',
-                    name: process.env.BREVO_SENDER_NAME || 'Nene Yogurt'
-                };
-                sendSmtpEmail.subject = adminSubject;
-                sendSmtpEmail.htmlContent = adminHtml;
-
-                await apiInstance.sendTransacEmail(sendSmtpEmail);
-                console.log('Admin order notification email sent');
-            }
-        } catch (adminEmailError) {
-            console.error('Failed to send admin email notification:', adminEmailError);
-        }
-
     } catch (error) {
-        await t.rollback();
         console.error('Payment verification error:', error);
         res.status(500).json({
             success: false,
-            error: {
-                code: 'SERVER_ERROR',
-                message: 'Error verifying payment'
-            }
+            error: { code: 'SERVER_ERROR', message: 'Error verifying payment' }
         });
     }
 };
@@ -794,57 +655,39 @@ const getOrderById = async (req, res) => {
         const orderId = req.params.id;
         const customerId = req.user.id;
 
-        const order = await Order.findByPk(orderId, {
-            include: [{
-                model: OrderItem,
-                as: 'items',
-                include: [{
-                    model: Product,
-                    as: 'product',
-                    attributes: ['image_url'],
-                    include: [{
-                        model: require('../models').models.ProductImage,
-                        as: 'images',
-                        attributes: ['image_url', 'is_primary']
-                    }]
-                }]
-            }]
-        });
+        const { data: order, error } = await supabase
+            .from('orders')
+            .select(`
+                *,
+                items:order_items(
+                    *,
+                    product:products(image_url)
+                )
+            `)
+            .eq('id', orderId)
+            .single();
 
-        if (!order) {
+        if (error || !order) {
             return res.status(404).json({
                 success: false,
-                error: {
-                    code: 'ORDER_NOT_FOUND',
-                    message: 'Order not found'
-                }
+                error: { code: 'ORDER_NOT_FOUND', message: 'Order not found' }
             });
         }
 
-        // Verify order belongs to customer
         if (order.customer_id !== customerId) {
             return res.status(403).json({
                 success: false,
-                error: {
-                    code: 'FORBIDDEN',
-                    message: 'You do not have permission to access this order'
-                }
+                error: { code: 'FORBIDDEN', message: 'Access denied' }
             });
         }
 
-        res.json({
-            success: true,
-            data: order
-        });
+        res.json({ success: true, data: order });
 
     } catch (error) {
         console.error('Get order by ID error:', error);
         res.status(500).json({
             success: false,
-            error: {
-                code: 'SERVER_ERROR',
-                message: 'Error fetching order details'
-            }
+            error: { code: 'SERVER_ERROR', message: 'Error fetching order' }
         });
     }
 };

@@ -1,22 +1,17 @@
-const { Product, ProductImage, Review, ProductVariation } = require('../models').models;
+const { supabase } = require('../utils/supabase');
 
 const getAllProducts = async (req, res) => {
     try {
-        const products = await Product.findAll({
-            include: [
-                {
-                    model: ProductImage,
-                    as: 'images',
-                    attributes: ['id', 'image_url', 'is_primary', 'display_order']
-                },
-                {
-                    model: ProductVariation,
-                    as: 'variations',
-                    attributes: ['id', 'name', 'price', 'sku', 'is_available', 'sort_order']
-                }
-            ],
-            order: [['created_at', 'DESC']]
-        });
+        const { data: products, error } = await supabase
+            .from('products')
+            .select(`
+                *,
+                images:product_images(id, image_url, is_primary, display_order),
+                variations:product_variations(id, name, price, sku, is_available, sort_order)
+            `)
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -36,7 +31,14 @@ const getAllProducts = async (req, res) => {
 
 const createProduct = async (req, res) => {
     try {
-        const product = await Product.create(req.body);
+        const { data: product, error } = await supabase
+            .from('products')
+            .insert(req.body)
+            .select()
+            .single();
+
+        if (error) throw error;
+
         res.status(201).json({
             success: true,
             data: product
@@ -55,9 +57,13 @@ const createProduct = async (req, res) => {
 
 const updateProduct = async (req, res) => {
     try {
-        const product = await Product.findByPk(req.params.id);
+        const { data: existing } = await supabase
+            .from('products')
+            .select('id')
+            .eq('id', req.params.id)
+            .single();
 
-        if (!product) {
+        if (!existing) {
             return res.status(404).json({
                 success: false,
                 error: {
@@ -67,7 +73,14 @@ const updateProduct = async (req, res) => {
             });
         }
 
-        await product.update(req.body);
+        const { data: product, error } = await supabase
+            .from('products')
+            .update(req.body)
+            .eq('id', req.params.id)
+            .select()
+            .single();
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -87,9 +100,13 @@ const updateProduct = async (req, res) => {
 
 const deleteProduct = async (req, res) => {
     try {
-        const product = await Product.findByPk(req.params.id);
+        const { data: existing } = await supabase
+            .from('products')
+            .select('id')
+            .eq('id', req.params.id)
+            .single();
 
-        if (!product) {
+        if (!existing) {
             return res.status(404).json({
                 success: false,
                 error: {
@@ -99,23 +116,18 @@ const deleteProduct = async (req, res) => {
             });
         }
 
-        // Delete all reviews for this product
-        await Review.destroy({
-            where: { product_id: req.params.id }
-        });
+        // Delete associated data first
+        await supabase.from('reviews').delete().eq('product_id', req.params.id);
+        await supabase.from('product_images').delete().eq('product_id', req.params.id);
+        await supabase.from('product_variations').delete().eq('product_id', req.params.id);
 
-        // Delete all product images
-        await ProductImage.destroy({
-            where: { product_id: req.params.id }
-        });
+        // Delete the product
+        const { error } = await supabase
+            .from('products')
+            .delete()
+            .eq('id', req.params.id);
 
-        // Delete all product variations
-        await ProductVariation.destroy({
-            where: { product_id: req.params.id }
-        });
-
-        // Hard delete the product (foreign key now SET NULL, so order history preserved)
-        await product.destroy();
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -138,7 +150,12 @@ const addProductImage = async (req, res) => {
         const { id } = req.params;
         const { image_url, is_primary, display_order } = req.body;
 
-        const product = await Product.findByPk(id);
+        const { data: product } = await supabase
+            .from('products')
+            .select('id')
+            .eq('id', id)
+            .single();
+
         if (!product) {
             return res.status(404).json({
                 success: false,
@@ -149,12 +166,18 @@ const addProductImage = async (req, res) => {
             });
         }
 
-        const image = await ProductImage.create({
-            product_id: id,
-            image_url,
-            is_primary: is_primary || false,
-            display_order: display_order || 0
-        });
+        const { data: image, error } = await supabase
+            .from('product_images')
+            .insert({
+                product_id: id,
+                image_url,
+                is_primary: is_primary || false,
+                display_order: display_order || 0
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
 
         res.status(201).json({
             success: true,
@@ -176,12 +199,12 @@ const deleteProductImage = async (req, res) => {
     try {
         const { id, imageId } = req.params;
 
-        const image = await ProductImage.findOne({
-            where: {
-                id: imageId,
-                product_id: id
-            }
-        });
+        const { data: image } = await supabase
+            .from('product_images')
+            .select('id')
+            .eq('id', imageId)
+            .eq('product_id', id)
+            .single();
 
         if (!image) {
             return res.status(404).json({
@@ -193,7 +216,12 @@ const deleteProductImage = async (req, res) => {
             });
         }
 
-        await image.destroy();
+        const { error } = await supabase
+            .from('product_images')
+            .delete()
+            .eq('id', imageId);
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -218,7 +246,12 @@ const createVariation = async (req, res) => {
         const { id } = req.params;
         const { name, price, sku, is_available, sort_order } = req.body;
 
-        const product = await Product.findByPk(id);
+        const { data: product } = await supabase
+            .from('products')
+            .select('id')
+            .eq('id', id)
+            .single();
+
         if (!product) {
             return res.status(404).json({
                 success: false,
@@ -229,14 +262,20 @@ const createVariation = async (req, res) => {
             });
         }
 
-        const variation = await ProductVariation.create({
-            product_id: id,
-            name,
-            price,
-            sku: sku || null,
-            is_available: is_available !== undefined ? is_available : true,
-            sort_order: sort_order || 0
-        });
+        const { data: variation, error } = await supabase
+            .from('product_variations')
+            .insert({
+                product_id: id,
+                name,
+                price,
+                sku: sku || null,
+                is_available: is_available !== undefined ? is_available : true,
+                sort_order: sort_order || 0
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
 
         res.status(201).json({
             success: true,
@@ -259,14 +298,14 @@ const updateVariation = async (req, res) => {
         const { id, variationId } = req.params;
         const { name, price, sku, is_available, sort_order } = req.body;
 
-        const variation = await ProductVariation.findOne({
-            where: {
-                id: variationId,
-                product_id: id
-            }
-        });
+        const { data: existing } = await supabase
+            .from('product_variations')
+            .select('*')
+            .eq('id', variationId)
+            .eq('product_id', id)
+            .single();
 
-        if (!variation) {
+        if (!existing) {
             return res.status(404).json({
                 success: false,
                 error: {
@@ -276,13 +315,20 @@ const updateVariation = async (req, res) => {
             });
         }
 
-        await variation.update({
-            name: name !== undefined ? name : variation.name,
-            price: price !== undefined ? price : variation.price,
-            sku: sku !== undefined ? sku : variation.sku,
-            is_available: is_available !== undefined ? is_available : variation.is_available,
-            sort_order: sort_order !== undefined ? sort_order : variation.sort_order
-        });
+        const { data: variation, error } = await supabase
+            .from('product_variations')
+            .update({
+                name: name !== undefined ? name : existing.name,
+                price: price !== undefined ? price : existing.price,
+                sku: sku !== undefined ? sku : existing.sku,
+                is_available: is_available !== undefined ? is_available : existing.is_available,
+                sort_order: sort_order !== undefined ? sort_order : existing.sort_order
+            })
+            .eq('id', variationId)
+            .select()
+            .single();
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -304,14 +350,14 @@ const deleteVariation = async (req, res) => {
     try {
         const { id, variationId } = req.params;
 
-        const variation = await ProductVariation.findOne({
-            where: {
-                id: variationId,
-                product_id: id
-            }
-        });
+        const { data: existing } = await supabase
+            .from('product_variations')
+            .select('id')
+            .eq('id', variationId)
+            .eq('product_id', id)
+            .single();
 
-        if (!variation) {
+        if (!existing) {
             return res.status(404).json({
                 success: false,
                 error: {
@@ -321,7 +367,12 @@ const deleteVariation = async (req, res) => {
             });
         }
 
-        await variation.destroy();
+        const { error } = await supabase
+            .from('product_variations')
+            .delete()
+            .eq('id', variationId);
+
+        if (error) throw error;
 
         res.json({
             success: true,

@@ -1,22 +1,23 @@
-const { Review, Product } = require('../models').models;
+const { supabase } = require('../utils/supabase');
 
 const getReviews = async (req, res) => {
     try {
         const { status, product_id } = req.query;
-        const where = {};
 
-        if (status) where.status = status;
-        if (product_id) where.product_id = product_id;
+        let query = supabase
+            .from('reviews')
+            .select(`
+                *,
+                product:products(name, image_url)
+            `)
+            .order('created_at', { ascending: false });
 
-        const reviews = await Review.findAll({
-            where,
-            include: [{
-                model: Product,
-                as: 'product',
-                attributes: ['name', 'image_url']
-            }],
-            order: [['created_at', 'DESC']]
-        });
+        if (status) query = query.eq('status', status);
+        if (product_id) query = query.eq('product_id', product_id);
+
+        const { data: reviews, error } = await query;
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -39,8 +40,13 @@ const updateReviewStatus = async (req, res) => {
         const { id } = req.params;
         const { status } = req.body;
 
-        const review = await Review.findByPk(id);
-        if (!review) {
+        const { data: existing } = await supabase
+            .from('reviews')
+            .select('id')
+            .eq('id', id)
+            .single();
+
+        if (!existing) {
             return res.status(404).json({
                 success: false,
                 error: {
@@ -50,7 +56,14 @@ const updateReviewStatus = async (req, res) => {
             });
         }
 
-        await review.update({ status });
+        const { data: review, error } = await supabase
+            .from('reviews')
+            .update({ status })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -71,9 +84,14 @@ const updateReviewStatus = async (req, res) => {
 const deleteReview = async (req, res) => {
     try {
         const { id } = req.params;
-        const review = await Review.findByPk(id);
 
-        if (!review) {
+        const { data: existing } = await supabase
+            .from('reviews')
+            .select('id')
+            .eq('id', id)
+            .single();
+
+        if (!existing) {
             return res.status(404).json({
                 success: false,
                 error: {
@@ -83,7 +101,12 @@ const deleteReview = async (req, res) => {
             });
         }
 
-        await review.destroy();
+        const { error } = await supabase
+            .from('reviews')
+            .delete()
+            .eq('id', id);
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -104,7 +127,12 @@ const deleteReview = async (req, res) => {
 const toggleFeaturedReview = async (req, res) => {
     try {
         const { id } = req.params;
-        const review = await Review.findByPk(id);
+
+        const { data: review } = await supabase
+            .from('reviews')
+            .select('*')
+            .eq('id', id)
+            .single();
 
         if (!review) {
             return res.status(404).json({
@@ -116,12 +144,19 @@ const toggleFeaturedReview = async (req, res) => {
             });
         }
 
-        await review.update({ is_featured: !review.is_featured });
+        const { data: updated, error } = await supabase
+            .from('reviews')
+            .update({ is_featured: !review.is_featured })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
 
         res.json({
             success: true,
-            data: review,
-            message: `Review ${review.is_featured ? 'featured' : 'unfeatured'} successfully`
+            data: updated,
+            message: `Review ${updated.is_featured ? 'featured' : 'unfeatured'} successfully`
         });
     } catch (error) {
         console.error('Error toggling featured review:', error);

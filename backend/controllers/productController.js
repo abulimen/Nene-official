@@ -1,22 +1,27 @@
-const { Product, Review, ProductImage, ProductVariation } = require('../models').models;
+const { supabase } = require('../utils/supabase');
 
 const getProducts = async (req, res) => {
     try {
-        const products = await Product.scope('active').findAll({
-            include: [
-                {
-                    model: ProductImage,
-                    as: 'images',
-                    attributes: ['id', 'image_url', 'is_primary', 'display_order']
-                },
-                {
-                    model: ProductVariation,
-                    as: 'variations',
-                    attributes: ['id', 'name', 'price', 'sku', 'is_available', 'sort_order'],
-                    order: [['sort_order', 'ASC']]
-                }
-            ]
+        // Get active products with their images and variations
+        const { data: products, error } = await supabase
+            .from('products')
+            .select(`
+                *,
+                images:product_images(id, image_url, is_primary, display_order),
+                variations:product_variations(id, name, price, sku, is_available, sort_order)
+            `)
+            .eq('is_active', true)
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        // Sort variations within each product
+        products.forEach(product => {
+            if (product.variations) {
+                product.variations.sort((a, b) => a.sort_order - b.sort_order);
+            }
         });
+
         res.json({
             success: true,
             data: products
@@ -35,23 +40,18 @@ const getProducts = async (req, res) => {
 
 const getProductById = async (req, res) => {
     try {
-        const product = await Product.scope('active').findByPk(req.params.id, {
-            include: [
-                {
-                    model: ProductImage,
-                    as: 'images',
-                    attributes: ['id', 'image_url', 'is_primary', 'display_order']
-                },
-                {
-                    model: ProductVariation,
-                    as: 'variations',
-                    attributes: ['id', 'name', 'price', 'sku', 'is_available', 'sort_order'],
-                    order: [['sort_order', 'ASC']]
-                }
-            ]
-        });
+        const { data: product, error } = await supabase
+            .from('products')
+            .select(`
+                *,
+                images:product_images(id, image_url, is_primary, display_order),
+                variations:product_variations(id, name, price, sku, is_available, sort_order)
+            `)
+            .eq('id', req.params.id)
+            .eq('is_active', true)
+            .single();
 
-        if (!product) {
+        if (error && error.code === 'PGRST116') {
             return res.status(404).json({
                 success: false,
                 error: {
@@ -59,6 +59,12 @@ const getProductById = async (req, res) => {
                     message: 'Product not found'
                 }
             });
+        }
+        if (error) throw error;
+
+        // Sort variations
+        if (product.variations) {
+            product.variations.sort((a, b) => a.sort_order - b.sort_order);
         }
 
         res.json({
@@ -79,10 +85,14 @@ const getProductById = async (req, res) => {
 
 const getProductReviews = async (req, res) => {
     try {
-        const reviews = await Review.scope('approved').findAll({
-            where: { product_id: req.params.id },
-            order: [['created_at', 'DESC']]
-        });
+        const { data: reviews, error } = await supabase
+            .from('reviews')
+            .select('*')
+            .eq('product_id', req.params.id)
+            .eq('status', 'approved')
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -102,16 +112,18 @@ const getProductReviews = async (req, res) => {
 
 const getFeaturedReviews = async (req, res) => {
     try {
-        const reviews = await Review.scope('approved').findAll({
-            where: { is_featured: true },
-            include: [{
-                model: Product,
-                as: 'product',
-                attributes: ['id', 'name', 'image_url']
-            }],
-            order: [['updated_at', 'DESC']],
-            limit: 10
-        });
+        const { data: reviews, error } = await supabase
+            .from('reviews')
+            .select(`
+                *,
+                product:products(id, name, image_url)
+            `)
+            .eq('status', 'approved')
+            .eq('is_featured', true)
+            .order('updated_at', { ascending: false })
+            .limit(10);
+
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -154,14 +166,20 @@ const submitReview = async (req, res) => {
             });
         }
 
-        const review = await Review.create({
-            product_id,
-            customer_name,
-            customer_email,
-            rating,
-            review_text,
-            status: 'pending'
-        });
+        const { data: review, error } = await supabase
+            .from('reviews')
+            .insert({
+                product_id,
+                customer_name,
+                customer_email,
+                rating,
+                review_text,
+                status: 'pending'
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
 
         res.status(201).json({
             success: true,

@@ -1,7 +1,5 @@
-const { Order, OrderItem, OrderStatusHistory, AdminUser } = require('../models').models;
-const { Op } = require('sequelize');
+const { supabase } = require('../utils/supabase');
 const emailService = require('../services/emailService');
-const { sequelize } = require('../utils/db');
 
 const getOrders = async (req, res) => {
     try {
@@ -19,71 +17,47 @@ const getOrders = async (req, res) => {
             sort_order = 'DESC'
         } = req.query;
 
-        // Build where clause
-        const where = {};
+        const offset = (page - 1) * parseInt(limit);
 
-        // Status filter
-        if (status) {
-            where.order_status = status;
-        }
+        // Start building query
+        let query = supabase
+            .from('orders')
+            .select(`
+                *,
+                items:order_items(*)
+            `, { count: 'exact' });
 
-        // Payment status filter
-        if (payment_status) {
-            where.payment_status = payment_status;
-        }
+        // Status filters
+        if (status) query = query.eq('order_status', status);
+        if (payment_status) query = query.eq('payment_status', payment_status);
 
         // Date range filter
-        if (date_from || date_to) {
-            where.created_at = {};
-            if (date_from) {
-                where.created_at[Op.gte] = new Date(date_from);
-            }
-            if (date_to) {
-                // Add 23:59:59 to include the entire day
-                const endDate = new Date(date_to);
-                endDate.setHours(23, 59, 59, 999);
-                where.created_at[Op.lte] = endDate;
-            }
+        if (date_from) query = query.gte('created_at', new Date(date_from).toISOString());
+        if (date_to) {
+            const endDate = new Date(date_to);
+            endDate.setHours(23, 59, 59, 999);
+            query = query.lte('created_at', endDate.toISOString());
         }
 
         // Amount range filter
-        if (amount_min || amount_max) {
-            where.total_amount = {};
-            if (amount_min) {
-                where.total_amount[Op.gte] = parseFloat(amount_min);
-            }
-            if (amount_max) {
-                where.total_amount[Op.lte] = parseFloat(amount_max);
-            }
-        }
+        if (amount_min) query = query.gte('total_amount', parseFloat(amount_min));
+        if (amount_max) query = query.lte('total_amount', parseFloat(amount_max));
 
-        // Text search across order_number, customer name, and email
+        // Text search
         if (search) {
-            where[Op.or] = [
-                { order_number: { [Op.like]: `%${search}%` } },
-                { customer_first_name: { [Op.like]: `%${search}%` } },
-                { customer_last_name: { [Op.like]: `%${search}%` } },
-                { customer_email: { [Op.like]: `%${search}%` } }
-            ];
+            query = query.or(`order_number.ilike.%${search}%,customer_first_name.ilike.%${search}%,customer_last_name.ilike.%${search}%,customer_email.ilike.%${search}%`);
         }
 
-        // Validate sort_by column
+        // Sorting
         const allowedSortColumns = ['created_at', 'total_amount', 'order_status', 'order_number'];
         const sortColumn = allowedSortColumns.includes(sort_by) ? sort_by : 'created_at';
-        const sortDirection = sort_order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+        const ascending = sort_order.toUpperCase() === 'ASC';
 
-        const offset = (page - 1) * limit;
+        const { data: orders, count, error } = await query
+            .order(sortColumn, { ascending })
+            .range(offset, offset + parseInt(limit) - 1);
 
-        const { count, rows: orders } = await Order.findAndCountAll({
-            where,
-            limit: parseInt(limit),
-            offset,
-            order: [[sortColumn, sortDirection]],
-            include: [{
-                model: OrderItem,
-                as: 'items'
-            }]
-        });
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -108,18 +82,20 @@ const getOrders = async (req, res) => {
 
 const getOrderById = async (req, res) => {
     try {
-        const order = await Order.findByPk(req.params.id, {
-            include: [
-                { model: OrderItem, as: 'items' },
-                {
-                    model: OrderStatusHistory,
-                    as: 'statusHistory',
-                    include: [{ model: AdminUser, as: 'admin', attributes: ['id', 'full_name'] }]
-                }
-            ]
-        });
+        const { data: order, error } = await supabase
+            .from('orders')
+            .select(`
+                *,
+                items:order_items(*),
+                statusHistory:order_status_history(
+                    *,
+                    admin:admin_users(id, full_name)
+                )
+            `)
+            .eq('id', req.params.id)
+            .single();
 
-        if (!order) {
+        if (error && error.code === 'PGRST116') {
             return res.status(404).json({
                 success: false,
                 error: {
@@ -128,6 +104,7 @@ const getOrderById = async (req, res) => {
                 }
             });
         }
+        if (error) throw error;
 
         res.json({
             success: true,
@@ -146,14 +123,16 @@ const getOrderById = async (req, res) => {
 };
 
 const updateOrderStatus = async (req, res) => {
-    const t = await sequelize.transaction();
-
     try {
         const { status, notes } = req.body;
-        const order = await Order.findByPk(req.params.id);
 
-        if (!order) {
-            await t.rollback();
+        const { data: order, error: fetchError } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('id', req.params.id)
+            .single();
+
+        if (fetchError || !order) {
             return res.status(404).json({
                 success: false,
                 error: {
@@ -166,7 +145,6 @@ const updateOrderStatus = async (req, res) => {
         const oldStatus = order.order_status;
 
         if (oldStatus === status) {
-            await t.rollback();
             return res.status(400).json({
                 success: false,
                 error: {
@@ -176,20 +154,24 @@ const updateOrderStatus = async (req, res) => {
             });
         }
 
-        await order.update({ order_status: status }, { transaction: t });
+        // Update order status
+        const { error: updateError } = await supabase
+            .from('orders')
+            .update({ order_status: status })
+            .eq('id', order.id);
 
-        await OrderStatusHistory.create({
+        if (updateError) throw updateError;
+
+        // Create status history
+        await supabase.from('order_status_history').insert({
             order_id: order.id,
             old_status: oldStatus,
             new_status: status,
             changed_by: req.user.id,
-            notes: notes || `Status updated to ${status} `
-        }, { transaction: t });
+            notes: notes || `Status updated to ${status}`
+        });
 
-        await t.commit();
-
-        // Send email notifications based on status change
-        // Send email notifications based on status change
+        // Send email notification
         await emailService.sendOrderStatusUpdate(order, status);
 
         res.json({
@@ -203,7 +185,6 @@ const updateOrderStatus = async (req, res) => {
         });
 
     } catch (error) {
-        await t.rollback();
         console.error('Error updating order status:', error);
         res.status(500).json({
             success: false,
@@ -216,14 +197,16 @@ const updateOrderStatus = async (req, res) => {
 };
 
 const updateOrder = async (req, res) => {
-    const t = await sequelize.transaction();
-
     try {
         const { shipping_address, shipping_city, shipping_state, items } = req.body;
-        const order = await Order.findByPk(req.params.id);
 
-        if (!order) {
-            await t.rollback();
+        const { data: order, error: fetchError } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('id', req.params.id)
+            .single();
+
+        if (fetchError || !order) {
             return res.status(404).json({
                 success: false,
                 error: {
@@ -234,53 +217,64 @@ const updateOrder = async (req, res) => {
         }
 
         // Update shipping details
-        await order.update({
-            shipping_address,
-            shipping_city,
-            shipping_state
-        }, { transaction: t });
+        await supabase
+            .from('orders')
+            .update({
+                shipping_address,
+                shipping_city,
+                shipping_state
+            })
+            .eq('id', order.id);
 
         // Update items if provided
         if (items && items.length > 0) {
             // Delete existing items
-            await OrderItem.destroy({
-                where: { order_id: order.id },
-                transaction: t
-            });
+            await supabase
+                .from('order_items')
+                .delete()
+                .eq('order_id', order.id);
 
             // Create new items
             let subtotal = 0;
             for (const item of items) {
-                const product = await require('../models').models.Product.findByPk(item.product_id);
+                const { data: product } = await supabase
+                    .from('products')
+                    .select('name')
+                    .eq('id', item.product_id)
+                    .single();
+
                 if (!product) throw new Error(`Product ${item.product_id} not found`);
 
                 const itemSubtotal = parseFloat(item.price) * parseInt(item.quantity);
                 subtotal += itemSubtotal;
 
-                await OrderItem.create({
+                await supabase.from('order_items').insert({
                     order_id: order.id,
                     product_id: item.product_id,
                     product_name: product.name,
                     product_price: item.price,
                     quantity: item.quantity,
                     subtotal: itemSubtotal
-                }, { transaction: t });
+                });
             }
 
             // Update order totals
             const total_amount = subtotal + parseFloat(order.shipping_fee) - parseFloat(order.discount_amount || 0);
-            await order.update({
-                subtotal,
-                total_amount
-            }, { transaction: t });
+            await supabase
+                .from('orders')
+                .update({ subtotal, total_amount })
+                .eq('id', order.id);
         }
 
-        await t.commit();
-
         // Fetch updated order
-        const updatedOrder = await Order.findByPk(order.id, {
-            include: [{ model: OrderItem, as: 'items' }]
-        });
+        const { data: updatedOrder } = await supabase
+            .from('orders')
+            .select(`
+                *,
+                items:order_items(*)
+            `)
+            .eq('id', order.id)
+            .single();
 
         res.json({
             success: true,
@@ -289,7 +283,6 @@ const updateOrder = async (req, res) => {
         });
 
     } catch (error) {
-        await t.rollback();
         console.error('Error updating order:', error);
         res.status(500).json({
             success: false,

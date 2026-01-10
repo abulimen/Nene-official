@@ -1,4 +1,4 @@
-const { Customer, Cart, CartItem } = require('../models').models;
+const { supabase } = require('../utils/supabase');
 const { generateToken, comparePassword, hashPassword } = require('../utils/auth');
 const { OAuth2Client } = require('google-auth-library');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -17,7 +17,12 @@ const register = async (req, res) => {
             });
         }
 
-        const existingCustomer = await Customer.findOne({ where: { email } });
+        // Check if email exists
+        const { data: existingCustomer } = await supabase
+            .from('customers')
+            .select('id')
+            .eq('email', email)
+            .single();
 
         if (existingCustomer) {
             return res.status(400).json({
@@ -31,16 +36,24 @@ const register = async (req, res) => {
 
         const password_hash = await hashPassword(password);
 
-        const customer = await Customer.create({
-            email,
-            password_hash,
-            first_name,
-            last_name,
-            phone
-        });
+        const { data: customer, error } = await supabase
+            .from('customers')
+            .insert({
+                email,
+                password_hash,
+                first_name,
+                last_name,
+                phone
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
 
         // Create empty cart for new customer
-        await Cart.create({ customer_id: customer.id });
+        await supabase
+            .from('carts')
+            .insert({ customer_id: customer.id });
 
         const token = generateToken(customer);
 
@@ -82,9 +95,13 @@ const login = async (req, res) => {
             });
         }
 
-        const customer = await Customer.findOne({ where: { email } });
+        const { data: customer, error } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('email', email)
+            .single();
 
-        if (!customer || !customer.is_active) {
+        if (error || !customer || !customer.is_active) {
             return res.status(401).json({
                 success: false,
                 error: {
@@ -165,33 +182,50 @@ const googleLogin = async (req, res) => {
         const payload = ticket.getPayload();
         const { email, given_name, family_name, sub: googleId } = payload;
 
-        // Check if user exists
-        let customer = await Customer.findOne({
-            where: {
-                [require('sequelize').Op.or]: [
-                    { email },
-                    { google_id: googleId }
-                ]
-            }
-        });
+        // Check if user exists by email or google_id
+        const { data: existingByEmail } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('email', email)
+            .single();
+
+        const { data: existingByGoogleId } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('google_id', googleId)
+            .single();
+
+        let customer = existingByEmail || existingByGoogleId;
 
         if (customer) {
             // Update google_id if not present (linking account)
             if (!customer.google_id) {
-                await customer.update({ google_id: googleId });
+                await supabase
+                    .from('customers')
+                    .update({ google_id: googleId })
+                    .eq('id', customer.id);
             }
         } else {
             // Create new user
-            customer = await Customer.create({
-                email,
-                first_name: given_name,
-                last_name: family_name || given_name, // Fallback if no last name
-                google_id: googleId,
-                is_active: true
-            });
+            const { data: newCustomer, error } = await supabase
+                .from('customers')
+                .insert({
+                    email,
+                    first_name: given_name,
+                    last_name: family_name || given_name,
+                    google_id: googleId,
+                    is_active: true
+                })
+                .select()
+                .single();
+
+            if (error) throw error;
+            customer = newCustomer;
 
             // Create cart for new user
-            await Cart.create({ customer_id: customer.id });
+            await supabase
+                .from('carts')
+                .insert({ customer_id: customer.id });
         }
 
         if (!customer.is_active) {
